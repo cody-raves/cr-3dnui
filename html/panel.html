@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>3D Utility Panel</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+    }
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at top, #1dffb7 0, #02201a 55%, #000 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #panel {
+      width: 75vmin;
+      max-width: 950px;
+      aspect-ratio: 16 / 9;
+      background: #080f0f;
+      border-radius: 1.5vmin;
+      padding: 2.8vmin;
+      box-shadow:
+        0 0 0.5vmin rgba(0, 0, 0, 0.9),
+        0 0 4vmin rgba(0, 255, 170, 0.5);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 1.6vmin;
+      color: #e9fff7;
+    }
+
+    #panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 1.4vmin;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #7affd9;
+    }
+
+    #panel-body {
+      display: grid;
+      grid-template-columns: 1.2fr 1.6fr;
+      gap: 2vmin;
+    }
+
+    #info-card {
+      background: radial-gradient(circle at top left, #22ffbd 0, #003427 45%, #000 100%);
+      border-radius: 1.2vmin;
+      padding: 1.8vmin;
+      box-shadow: inset 0 0 1.4vmin rgba(0, 0, 0, 0.95);
+      display: flex;
+      flex-direction: column;
+      gap: 1.2vmin;
+    }
+
+    #info-title {
+      font-size: 1.5vmin;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      opacity: 0.9;
+    }
+
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 1.5vmin;
+      gap: 1vmin;
+    }
+    .info-label {
+      opacity: 0.75;
+    }
+    .info-value {
+      font-weight: 600;
+      text-align: right;
+      max-width: 60%;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+
+    #info-footer {
+      margin-top: auto;
+      font-size: 1.2vmin;
+      opacity: 0.8;
+    }
+
+    #buttons-card {
+      background: radial-gradient(circle at top, #0fffd8 0, #002f25 50%, #000 100%);
+      border-radius: 1.2vmin;
+      padding: 1.8vmin;
+      box-shadow: inset 0 0 1.4vmin rgba(0, 0, 0, 0.95);
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 1.4vmin;
+    }
+
+    #buttons-title {
+      font-size: 1.4vmin;
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      opacity: 0.9;
+    }
+
+    #button-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1.1vmin;
+      align-content: start;
+    }
+
+    .panel-btn {
+      position: relative;
+      border-radius: 0.8vmin;
+      border: 0.12vmin solid rgba(140, 255, 209, 0.35);
+      background: radial-gradient(circle at 20% 0, #54ffd2 0, #044234 55%, #000 100%);
+      color: #eafff8;
+      font-size: 1.35vmin;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.8vmin 0.5vmin;
+      text-align: center;
+      box-shadow:
+        0 0 0.7vmin rgba(0, 0, 0, 0.9),
+        0 0 1.4vmin rgba(0, 255, 200, 0.28);
+      transform: translateZ(0);
+      transition:
+        transform 80ms ease-out,
+        box-shadow 80ms ease-out,
+        background 80ms ease-out,
+        border-color 80ms ease-out;
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .panel-btn span {
+      position: relative;
+      z-index: 1;
+    }
+
+    .panel-btn::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 20% 0, rgba(255, 255, 255, 0.3), transparent 55%);
+      opacity: 0;
+      transition: opacity 90ms ease-out;
+    }
+
+    .panel-btn[data-variant="danger"] {
+      background: radial-gradient(circle at 20% 0, #ff8a8a 0, #5b0010 55%, #000 100%);
+      border-color: rgba(255, 138, 138, 0.7);
+    }
+    .panel-btn[data-variant="warn"] {
+      background: radial-gradient(circle at 20% 0, #ffd18c 0, #5b2d00 55%, #000 100%);
+      border-color: rgba(255, 209, 140, 0.7);
+    }
+    .panel-btn[data-variant="ok"] {
+      background: radial-gradient(circle at 20% 0, #91ffae 0, #005124 55%, #000 100%);
+      border-color: rgba(137, 255, 165, 0.7);
+    }
+
+    .panel-btn.active {
+      transform: translateY(0.3vmin);
+      box-shadow:
+        0 0 0.2vmin rgba(0, 0, 0, 1),
+        0 0 0.5vmin rgba(0, 255, 200, 0.12);
+    }
+    .panel-btn.active::before {
+      opacity: 1;
+    }
+
+    #panel-footer {
+      display: flex;
+      justify-content: space-between;
+      font-size: 1.2vmin;
+      color: rgba(210, 255, 237, 0.8);
+    }
+
+    #status {
+      text-align: right;
+    }
+
+    #click-dot {
+      position: fixed;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255, 0, 0, 0.9);
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      opacity: 0;
+      transition: opacity 120ms ease-out, transform 120ms ease-out;
+      z-index: 999;
+    }
+  </style>
+</head>
+<body>
+  <div id="panel">
+    <div id="panel-header">
+      <div>CANVAS CONTROL</div>
+      <div>3D NUI POC</div>
+    </div>
+
+    <div id="panel-body">
+      <div id="info-card">
+        <div id="info-title">PLAYER SUMMARY</div>
+
+        <div class="info-row">
+          <div class="info-label">Name</div>
+          <div class="info-value" id="info-name">Loading...</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">CID</div>
+          <div class="info-value" id="info-cid">-</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">Job</div>
+          <div class="info-value" id="info-job">-</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">Gang</div>
+          <div class="info-value" id="info-gang">-</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">Cash</div>
+          <div class="info-value" id="info-cash">$0</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">Bank</div>
+          <div class="info-value" id="info-bank">$0</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">Phone</div>
+          <div class="info-value" id="info-phone">-</div>
+        </div>
+        <div class="info-row">
+          <div class="info-label">Apartment</div>
+          <div class="info-value" id="info-apt">-</div>
+        </div>
+
+        <div id="info-footer">
+          Look at the screen, press G to enable, then left-click buttons.
+        </div>
+      </div>
+
+      <div id="buttons-card">
+        <div id="buttons-title">ACTIONS</div>
+        <div id="button-grid">
+          <!-- time -->
+          <div class="panel-btn" data-action="time_day"><span>Time: Day</span></div>
+          <div class="panel-btn" data-action="time_night"><span>Time: Night</span></div>
+          <div class="panel-btn" data-action="set_waypoint"><span>Set Waypoint</span></div>
+
+          <!-- weather -->
+          <div class="panel-btn" data-action="weather_clear"><span>Weather: Clear</span></div>
+          <div class="panel-btn" data-action="weather_rain"><span>Weather: Rain</span></div>
+          <div class="panel-btn" data-action="refresh_info"><span>Refresh Info</span></div>
+
+          <!-- money / item -->
+          <div class="panel-btn" data-action="cash_plus"><span>Add $5</span></div>
+          <div class="panel-btn" data-action="cash_minus"><span>Remove $5</span></div>
+          <div class="panel-btn" data-action="give_water" data-variant="ok"><span>Give Water Bottle</span></div>
+
+          <!-- job / gang -->
+          <div class="panel-btn" data-action="add_job"><span>Set Job: Police</span></div>
+          <div class="panel-btn" data-action="remove_job"><span>Set Job: Unemployed</span></div>
+          <div class="panel-btn" data-action="add_gang"><span>Add Gang: Ballas</span></div>
+          <div class="panel-btn" data-action="remove_gang"><span>Remove Gang</span></div>
+
+          <!-- misc -->
+          <div class="panel-btn" data-action="revive" data-variant="warn"><span>Revive Player</span></div>
+          <div class="panel-btn" data-action="spawn_elegy" data-variant="ok"><span>Spawn Elegy2</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="panel-footer">
+      <div>Canvas Dev Utilities</div>
+      <div id="status">Waiting for input…</div>
+    </div>
+  </div>
+
+  <div id="click-dot"></div>
+
+  <script>
+    const resourceName = typeof GetParentResourceName === "function"
+      ? GetParentResourceName()
+      : "cr-3dnui";
+
+    const statusEl = document.getElementById("status");
+    const clickDot = document.getElementById("click-dot");
+
+    const infoEls = {
+      name: document.getElementById("info-name"),
+      cid: document.getElementById("info-cid"),
+      job: document.getElementById("info-job"),
+      gang: document.getElementById("info-gang"),
+      cash: document.getElementById("info-cash"),
+      bank: document.getElementById("info-bank"),
+      phone: document.getElementById("info-phone"),
+      apt: document.getElementById("info-apt"),
+    };
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function updateInfo(data) {
+      if (!data) return;
+      infoEls.name.textContent = data.name || "Unknown";
+      infoEls.cid.textContent = data.cid || "-";
+      infoEls.job.textContent = data.job || "-";
+      infoEls.gang.textContent = data.gang || "None";
+      infoEls.cash.textContent = typeof data.cash === "number" ? `$${data.cash}` : (data.cash || "$0");
+      infoEls.bank.textContent = typeof data.bank === "number" ? `$${data.bank}` : (data.bank || "$0");
+      infoEls.phone.textContent = data.phone || "-";
+      infoEls.apt.textContent = data.apartment || "-";
+    }
+
+    function flashButton(btn) {
+      btn.classList.add("active");
+      setTimeout(() => btn.classList.remove("active"), 110);
+    }
+
+    function sendAction(action) {
+      if (!action) return;
+      setStatus("Sending: " + action);
+      fetch(`https://${resourceName}/panelAction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json; charset=UTF-8",
+        },
+        body: JSON.stringify({ action }),
+      }).catch(() => {});
+    }
+
+    function handleButtonClick(btn) {
+      const action = btn.dataset.action;
+      if (!action) return;
+      flashButton(btn);
+      sendAction(action);
+    }
+
+    function handleClickAt(xNorm, yNorm) {
+      const xPx = xNorm * window.innerWidth;
+      const yPx = yNorm * window.innerHeight;
+
+      // debug dot
+      clickDot.style.left = xPx + "px";
+      clickDot.style.top = yPx + "px";
+      clickDot.style.opacity = "1";
+      clickDot.style.transform = "translate(-50%, -50%) scale(1)";
+      setTimeout(() => {
+        clickDot.style.opacity = "0";
+        clickDot.style.transform = "translate(-50%, -50%) scale(0.4)";
+      }, 80);
+
+      const el = document.elementFromPoint(xPx, yPx);
+      if (!el) {
+        setStatus("No element under click.");
+        return;
+      }
+
+      const btn = el.closest(".panel-btn");
+      if (!btn) {
+        setStatus("Clicked outside any button.");
+        return;
+      }
+
+      handleButtonClick(btn);
+    }
+
+    // allow clicking with a real mouse too (for testing in browser)
+    Array.from(document.querySelectorAll(".panel-btn")).forEach((btn) => {
+      btn.addEventListener("click", () => handleButtonClick(btn));
+    });
+
+    // messages from Lua (DUI)
+    window.addEventListener("message", (event) => {
+      const data = event.data || {};
+
+      if (data.type === "click" && typeof data.x === "number" && typeof data.y === "number") {
+        handleClickAt(data.x, data.y);
+      }
+
+      if (data.type === "playerInfo") {
+        updateInfo(data.data || {});
+        setStatus("Player info updated.");
+      }
+    });
+
+    setStatus("Waiting for input…");
+  </script>
+</body>
+</html>
