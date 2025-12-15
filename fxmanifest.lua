@@ -1,14 +1,11 @@
 fx_version 'cerulean'
 game 'gta5'
+lua54 'yes'
 
 author 'codyraves'
-description 'Interactive 3D NUI panels for FiveM – live HTML/JS on in-world screens.'
-version '0.1.0'
+description 'cr-3dnui: 3D DUI/NUI panel renderer + raycast/click API (library resource)'
+version '1.0.0'
 
-files {
-    'html/panel.html'
+client_scripts {
+  'client/main.lua'
 }
-
-client_script 'client.lua'
-server_script 'server.lua'
-shared_script 'config.lua'
