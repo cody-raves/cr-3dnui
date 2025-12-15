@@ -1,14 +1,13 @@
--- cr-3dnui (API / library resource)
--- Renders DUI-backed HTML pages onto arbitrary world-space quads
--- and provides raycast -> UV helpers for interaction.
---
--- Designed to be USED via exports from other resources.
+
+-- cr-3dnui (library)
+-- Renders DUI-backed HTML pages on arbitrary world-space quads,
+-- raycast -> UV helpers, and optional native mouse injection for drag.
 
 local PANELS = {}
 local NEXT_ID = 1
 
 -------------------------------------------------------------
--- vector helpers
+-- Small vector helpers
 -------------------------------------------------------------
 local function vecAdd(a, b) return vector3(a.x + b.x, a.y + b.y, a.z + b.z) end
 local function vecSub(a, b) return vector3(a.x - b.x, a.y - b.y, a.z - b.z) end
@@ -29,7 +28,7 @@ local function vecNorm(a)
 end
 
 -------------------------------------------------------------
--- camera rotation → forward direction
+-- camera → direction
 -------------------------------------------------------------
 local function rotationToDirection(rot)
   local radX = math.rad(rot.x)
@@ -60,7 +59,6 @@ local function makePanelBasis(pos, normal, width, height, zOffset, faceCamera)
   local worldUp = vector3(0.0, 0.0, 1.0)
   local right = vecCross(worldUp, planeNormal)
 
-  -- fallback for near-horizontal surfaces
   if math.abs(right.x) < 0.001 and math.abs(right.y) < 0.001 and math.abs(right.z) < 0.001 then
     worldUp = vector3(0.0, 1.0, 0.0)
     right = vecCross(planeNormal, worldUp)
@@ -69,21 +67,18 @@ local function makePanelBasis(pos, normal, width, height, zOffset, faceCamera)
   right = vecNorm(right)
   local upWall = vecNorm(vecCross(right, planeNormal))
 
-  local halfW = (width or 1.0) * 0.5
-  local halfH = (height or 1.0) * 0.5
-
   return {
     center = center,
     normal = planeNormal,
     right  = right,
     up     = upWall,
-    halfW  = halfW,
-    halfH  = halfH
+    halfW  = (width * 0.5),
+    halfH  = (height * 0.5)
   }
 end
 
 -------------------------------------------------------------
--- Draw a single panel quad (2 triangles)
+-- Draw a single panel quad (2 tris)
 -------------------------------------------------------------
 local function drawPanel(panel)
   if not panel.enabled then return end
@@ -100,27 +95,14 @@ local function drawPanel(panel)
 
   local r, g, b, a = 255, 255, 255, panel.alpha or 255
 
-  -- U flipped so text is not mirrored (matches your POC)
-  DrawSpritePoly(
-    v1.x, v1.y, v1.z,
-    v2.x, v2.y, v2.z,
-    v3.x, v3.y, v3.z,
-    r, g, b, a,
-    panel.txdName, panel.texName,
-    0.0, 1.0, 1.0,
-    1.0, 1.0, 1.0,
-    1.0, 0.0, 1.0
+  -- U flipped so text is not mirrored
+  DrawSpritePoly(v1.x,v1.y,v1.z, v2.x,v2.y,v2.z, v3.x,v3.y,v3.z,
+    r,g,b,a, panel.txdName, panel.texName,
+    0.0,1.0,1.0,  1.0,1.0,1.0,  1.0,0.0,1.0
   )
-
-  DrawSpritePoly(
-    v1.x, v1.y, v1.z,
-    v3.x, v3.y, v3.z,
-    v4.x, v4.y, v4.z,
-    r, g, b, a,
-    panel.txdName, panel.texName,
-    0.0, 1.0, 1.0,
-    1.0, 0.0, 1.0,
-    0.0, 0.0, 1.0
+  DrawSpritePoly(v1.x,v1.y,v1.z, v3.x,v3.y,v3.z, v4.x,v4.y,v4.z,
+    r,g,b,a, panel.txdName, panel.texName,
+    0.0,1.0,1.0,  1.0,0.0,1.0,  0.0,0.0,1.0
   )
 end
 
@@ -132,8 +114,7 @@ local function raycastPanelUV(panel, maxDist)
   if not panel or not panel.enabled then return nil end
 
   local basis = makePanelBasis(panel.pos, panel.normal, panel.width, panel.height, panel.zOffset, panel.faceCamera)
-  local center, normal, right, upWall, halfW, halfH =
-    basis.center, basis.normal, basis.right, basis.up, basis.halfW, basis.halfH
+  local center, normal, right, upWall, halfW, halfH = basis.center, basis.normal, basis.right, basis.up, basis.halfW, basis.halfH
 
   local camPos = GetGameplayCamCoord()
   local camRot = GetGameplayCamRot(2)
@@ -151,13 +132,10 @@ local function raycastPanelUV(panel, maxDist)
 
   local localX = vecDot(rel, right) / halfW
   local localY = vecDot(rel, upWall) / halfH
-
   if math.abs(localX) > 1.0 or math.abs(localY) > 1.0 then return nil end
 
-  -- v is NOT flipped here; the flip is handled in DrawSpritePoly UVs
   local u = (localX + 1.0) * 0.5
   local v = (localY + 1.0) * 0.5
-
   return hitPos, u, v, t
 end
 
@@ -189,50 +167,43 @@ local function destroyDuiForPanel(panel)
 end
 
 -------------------------------------------------------------
+-- Helpers: UV -> pixel coords for SendDuiMouse*
+-------------------------------------------------------------
+local function uvToPixels(panel, u, v, flipY)
+  local resW = panel.resW or 1024
+  local resH = panel.resH or 1024
+  local uu = math.min(1.0, math.max(0.0, u or 0.0))
+  local vv = math.min(1.0, math.max(0.0, v or 0.0))
+  if flipY then vv = 1.0 - vv end
+  local x = math.floor(uu * resW)
+  local y = math.floor(vv * resH)
+  return x, y
+end
+
+-------------------------------------------------------------
 -- EXPORTS (client)
 -------------------------------------------------------------
-
---- Create a panel.
---- opts = {
----   id = optional number/string,
----   url = "nui://some_resource/html/index.html",
----   pos = vector3(...),
----   normal = vector3(...),
----   width = 1.0, height = 0.6,
----   alpha = 255,
----   resW = 1024, resH = 1024,
----   zOffset = 0.002,
----   faceCamera = true/false,
----   enabled = true/false
---- }
 exports("CreatePanel", function(opts)
   opts = opts or {}
 
   local id = opts.id or NEXT_ID
-  if opts.id == nil then
-    NEXT_ID = NEXT_ID + 1
-  end
+  NEXT_ID = (type(id) == "number") and (id + 1) or (NEXT_ID + 1)
 
   local owner = GetInvokingResource() or "unknown"
-
   local panel = {
     id = id,
     owner = owner,
-
     url = opts.url,
     resW = opts.resW or 1024,
     resH = opts.resH or 1024,
-
     pos = opts.pos or vector3(0.0, 0.0, 0.0),
     normal = opts.normal or vector3(0.0, 0.0, 1.0),
     width = opts.width or 1.0,
     height = opts.height or 1.0,
-
     alpha = opts.alpha or 255,
     enabled = (opts.enabled == nil) and true or (opts.enabled == true),
     zOffset = opts.zOffset or 0.002,
     faceCamera = (opts.faceCamera == nil) and true or (opts.faceCamera == true),
-
     dui = nil,
     txdName = nil,
     texName = nil,
@@ -240,7 +211,6 @@ exports("CreatePanel", function(opts)
 
   createDuiForPanel(panel)
   PANELS[tostring(id)] = panel
-
   return id
 end)
 
@@ -265,6 +235,16 @@ exports("SetPanelSize", function(panelId, width, height)
   if height then panel.height = height end
 end)
 
+exports("SetPanelUrl", function(panelId, url, resW, resH)
+  local panel = PANELS[tostring(panelId)]
+  if not panel then return end
+  destroyDuiForPanel(panel)
+  panel.url = url
+  panel.resW = resW or panel.resW or 1024
+  panel.resH = resH or panel.resH or 1024
+  createDuiForPanel(panel)
+end)
+
 exports("SetPanelAlpha", function(panelId, alpha)
   local panel = PANELS[tostring(panelId)]
   if not panel then return end
@@ -277,54 +257,58 @@ exports("SetPanelEnabled", function(panelId, enabled)
   panel.enabled = (enabled == true)
 end)
 
-exports("SetPanelUrl", function(panelId, url, resW, resH)
-  local panel = PANELS[tostring(panelId)]
-  if not panel then return end
-
-  destroyDuiForPanel(panel)
-
-  panel.url = url
-  panel.resW = resW or panel.resW or 1024
-  panel.resH = resH or panel.resH or 1024
-
-  createDuiForPanel(panel)
-end)
-
---- Send a Lua table as JSON to the panel's DUI page (window.postMessage → window.addEventListener("message"))
-exports("SendMessage", function(panelId, messageTable)
-  local panel = PANELS[tostring(panelId)]
-  if not panel or not panel.dui then return false end
-
-  local payload = json.encode(messageTable or {})
-  SendDuiMessage(panel.dui, payload)
-  return true
-end)
-
---- Raycast the camera onto the panel.
---- Returns hitPos, u, v, t (t = distance along ray)
 exports("RaycastPanel", function(panelId, maxDist)
   local panel = PANELS[tostring(panelId)]
   if not panel then return nil end
   return raycastPanelUV(panel, maxDist)
 end)
 
---- Convenience: compute UV (or accept them), then send {type="click", x=u, y=v}.
+-- Original message-based click (good for menus)
 exports("SendClick", function(panelId, u, v, meta)
   local panel = PANELS[tostring(panelId)]
   if not panel or not panel.dui then return false end
+  local payload = { type = "click", x = u, y = v, meta = meta or {} }
+  SendDuiMessage(panel.dui, json.encode(payload))
+  return true
+end)
 
-  if u == nil or v == nil then
-    local _, uu, vv = raycastPanelUV(panel, meta and meta.maxDist or nil)
-    if not uu then return false end
-    u, v = uu, vv
-  end
+exports("SendMessage", function(panelId, messageTable)
+  local panel = PANELS[tostring(panelId)]
+  if not panel or not panel.dui then return false end
+  SendDuiMessage(panel.dui, json.encode(messageTable or {}))
+  return true
+end)
 
-  SendDuiMessage(panel.dui, json.encode({
-    type = "click",
-    x = u,
-    y = v,
-    meta = meta or {}
-  }))
+-- Native mouse injection (enables drag, hover, WebAudio gesture unlock, etc.)
+exports("SendMouseMove", function(panelId, u, v, opts)
+  local panel = PANELS[tostring(panelId)]
+  if not panel or not panel.dui then return false end
+  opts = opts or {}
+  local x, y = uvToPixels(panel, u, v, opts.flipY == true)
+  SendDuiMouseMove(panel.dui, x, y)
+  return true
+end)
+
+exports("SendMouseDown", function(panelId, button)
+  local panel = PANELS[tostring(panelId)]
+  if not panel or not panel.dui then return false end
+  local btn = (button == "right" and "right") or (button == "middle" and "middle") or "left"
+  SendDuiMouseDown(panel.dui, btn)
+  return true
+end)
+
+exports("SendMouseUp", function(panelId, button)
+  local panel = PANELS[tostring(panelId)]
+  if not panel or not panel.dui then return false end
+  local btn = (button == "right" and "right") or (button == "middle" and "middle") or "left"
+  SendDuiMouseUp(panel.dui, btn)
+  return true
+end)
+
+exports("SendMouseWheel", function(panelId, delta)
+  local panel = PANELS[tostring(panelId)]
+  if not panel or not panel.dui then return false end
+  SendDuiMouseWheel(panel.dui, delta or 0)
   return true
 end)
 
@@ -335,7 +319,7 @@ exports("GetPanelOwner", function(panelId)
 end)
 
 -------------------------------------------------------------
--- Render loop (draw all panels)
+-- Render loop
 -------------------------------------------------------------
 CreateThread(function()
   while true do
@@ -347,7 +331,7 @@ CreateThread(function()
 end)
 
 -------------------------------------------------------------
--- Cleanup on resource stop (library stop OR owner stop)
+-- Cleanup on resource stop
 -------------------------------------------------------------
 AddEventHandler("onResourceStop", function(resName)
   if resName == GetCurrentResourceName() then
