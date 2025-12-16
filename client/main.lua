@@ -1,10 +1,57 @@
-
 -- cr-3dnui (library)
 -- Renders DUI-backed HTML pages on arbitrary world-space quads,
 -- raycast -> UV helpers, and optional native mouse injection for drag.
 
 local PANELS = {}
 local NEXT_ID = 1
+
+-------------------------------------------------------------
+-- Built-in HUD cursor (optional helper)
+-- NOTE: The API does NOT force-draw a cursor; consuming resources call DrawCursor().
+-------------------------------------------------------------
+local CURSOR = {
+  txd = "cr3dnui_cursor_txd",
+  tex = "cursor",
+  ready = false
+}
+
+CreateThread(function()
+  -- wait one frame so runtime txd creation is safe
+  Wait(0)
+  local txd = CreateRuntimeTxd(CURSOR.txd)
+  -- cursor tip should be at top-left pixel (0,0) in the PNG
+  CreateRuntimeTextureFromImage(txd, CURSOR.tex, "assets/cursor.png")
+  CURSOR.ready = true
+end)
+
+--- Draw a mouse cursor sprite on the HUD.
+--- cx, cy are screen coords (0..1). For center, use 0.5, 0.5.
+--- isHit toggles hit coloring (defaults to green when true).
+--- opts = { w,h, tipX, tipY, r,g,b,a, hitR,hitG,hitB,hitA }
+exports("DrawCursor", function(cx, cy, isHit, opts)
+  if not CURSOR.ready then return false end
+  opts = opts or {}
+
+  local w = opts.w or 0.015
+  local h = opts.h or 0.03
+
+  -- hotspot in normalized sprite space (0..1).
+  -- for classic arrow cursor with tip at top-left: tipX=0, tipY=0
+  local tipX = opts.tipX or 0.0
+  local tipY = opts.tipY or 0.0
+
+  -- DrawSprite is centered; offset so (cx,cy) lands on hotspot.
+  local drawX = (cx or 0.5) + (w * (0.5 - tipX))
+  local drawY = (cy or 0.5) + (h * (0.5 - tipY))
+
+  local r, g, b, a = opts.r or 255, opts.g or 255, opts.b or 255, opts.a or 235
+  if isHit then
+    r, g, b, a = opts.hitR or 0, opts.hitG or 255, opts.hitB or 0, opts.hitA or 235
+  end
+
+  DrawSprite(CURSOR.txd, CURSOR.tex, drawX, drawY, w, h, 0.0, r, g, b, a)
+  return true
+end)
 
 -------------------------------------------------------------
 -- Small vector helpers

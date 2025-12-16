@@ -9,3 +9,8 @@ version '1.1.0'
 client_scripts {
   'client/main.lua'
 }
+
+-- optional built-in HUD cursor sprite (used via exports("DrawCursor", ...))
+files {
+  'assets/cursor.png'
+}
