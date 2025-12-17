@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+
+    <div id="ui">
+      <div class="row" id="brushRow">
+        <div class="label" id="sizeLabel">Brush</div>
+        <input id="size" type="range" min="2" max="40" value="10"/>
+      </div>
+
+      <div class="row textControls" id="textRow" hidden>
+        <div class="label">Font</div>
+        <input id="fontSize" type="range" min="8" max="72" value="24"/>
+
+        <div class="dd" id="fontFamily" title="Font">
+          <button type="button" class="dd-btn" id="fontFamilyBtn">System</button>
+          <div class="dd-menu" id="fontFamilyMenu" hidden>
+            <div class="dd-item" data-label="System" data-value="system-ui,Segoe UI,Roboto,Arial">System</div>
+            <div class="dd-item" data-label="Arial" data-value="Arial">Arial</div>
+            <div class="dd-item" data-label="Courier" data-value="Courier New,monospace">Courier</div>
+            <div class="dd-item" data-label="Impact" data-value="Impact">Impact</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" id="palette"></div>
+      <input id="colorpicker" type="color" value="#000000" title="Custom color"/>
+
+      <button id="text">Text</button>
+      <button id="eraser">Eraser</button>
+      <button id="clear">Clear</button>
+
+      <div id="hint" class="hint" hidden></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
