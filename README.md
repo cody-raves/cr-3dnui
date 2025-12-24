@@ -152,6 +152,45 @@ A typical “use mode” loop looks like:
 
 ---
 
+## Panel resolution (resW/resH) and why it matters
+
+`cr-3dnui` turns raycast UVs (0..1) into DUI pixel coordinates:
+
+- `px = u * resW`
+- `py = v * resH`
+
+So DUI resolution affects:
+- **Input precision**: low res can feel “chunky” for hover/click (bigger pixel grid).
+- **Visual clarity**: low res looks blurry, especially for small text.
+- **Performance**: higher res costs more GPU/texture memory.
+
+### Recommended resolutions
+
+Match the DUI resolution to your **panel aspect ratio** and **UI density**:
+
+- **Simple UI / big buttons**
+  - `512×512` (or `512×256`, `256×512`)
+- **Most cases (recommended default)**
+  - `1024×1024` (or `1024×512`, `512×1024`)
+- **Small text / dense UI / “desktop-like” panels**
+  - `2048×1024` (or `2048×2048` if square)
+
+### Match aspect ratio
+
+If the panel is wide, use a wide DUI:
+- wide panel → `1024×512` or `2048×1024`
+
+If the panel is tall, use a tall DUI:
+- tall panel → `512×1024`
+
+Avoid forcing a square DUI onto a wide panel (it stretches UI and makes hit-testing feel off).
+
+### Practical tip
+
+Start at `1024×512` (wide) or `1024×1024` (square). Increase only if:
+- hover/click feels “steppy”
+- text is hard to read at the intended viewing distance
+
 ## Status
 
 This repository contains:
