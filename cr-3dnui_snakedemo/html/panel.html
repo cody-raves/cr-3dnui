@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+  <div id="wrap">
+    <div id="hud">
+      <div class="title">Snake</div>
+      <div class="sub">WASD or Arrow Keys • ESC exits focus</div>
+      <div class="row">
+        <div class="pill">Score: <span id="score">0</span></div>
+        <div class="pill">High: <span id="high">0</span></div>
+        <div class="pill">Last: <span id="last">—</span></div>
+      </div>
+    </div>
+
+    <canvas id="game" width="640" height="360"></canvas>
+
+    <div class="hint">F7 preview • E place • G focus • ESC exit • R reset</div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

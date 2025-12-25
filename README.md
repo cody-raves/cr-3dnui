@@ -25,13 +25,14 @@ Use cases:
 - Supports two interaction styles:
   - **Message-based** input (good for menus)
   - **Native mouse injection** (hover/drag, “real” pointer behavior)
+- Supports **focus + keyboard input** forwarding for keyboard-driven UIs (games, terminals, PIN pads)
 - Optional helper: draws a HUD cursor sprite via `DrawCursor()` (your resource decides when)
 
 ---
 
-## Included example
+## Included examples
 
-This repo ships with an example demo:
+This repo ships with example demos:
 
 - `cr-3dnui_whiteboarddemo/` — a placeable in-world whiteboard that supports:
   - brush drawing (drag)
@@ -39,21 +40,33 @@ This repo ships with an example demo:
   - text placement (onscreen keyboard commit)
   - custom font dropdown (DUI-safe)
 
-The demo is meant to be a **reference implementation** showing how to consume the library exports.
+- `cr-3dnui_snakedemo/` — a placeable in-world arcade panel demonstrating:
+  - keyboard input capture and forwarding into DUI
+  - strict focus mode (blocks GTA/server binds while active)
+  - real-time gameplay on a world-space surface
+  - ESC exit and auto-disengage when looking away
+
+The demos are meant to be a **reference implementation** showing how to consume the library exports.
+
+> **Important:** Only run **one demo at a time**. Both demos capture inputs (and may share keys like `G` / `F7`). Enabling both can cause conflicting keybind behavior.
 
 ---
 
 ## Installation
 
-1. Put both folders in your server resources:
+1. Put folders in your server resources:
    - `cr-3dnui`
    - `cr-3dnui_whiteboarddemo` (optional example)
+   - `cr-3dnui_snakedemo` (optional example)
 
-2. Start order in `server.cfg`:
+2. Start order in `server.cfg` (pick one demo):
 
 ```cfg
 ensure cr-3dnui
+
+# Choose ONE demo at a time:
 ensure cr-3dnui_whiteboarddemo
+# ensure cr-3dnui_snakedemo
 ```
 
 ---
@@ -129,6 +142,77 @@ You decide when/where to draw it (this library does not force a cursor).
 
 ---
 
+## Focus & keyboard input
+
+To support keyboard-driven apps (games, terminals, PIN pads, etc.), `cr-3dnui` provides a **focus mode** that:
+
+- Raycasts the panel every frame
+- Disables GTA/server controls while focused (prevents binds like cover, vehicle locks, etc.)
+- Captures key presses using `IsDisabledControlJustPressed`
+- Forwards keys into the DUI as `SendDuiMessage` payloads
+- Exits cleanly on ESC (and/or custom exit keys) or when you look away
+
+### Begin / end focus
+
+```lua
+exports["cr-3dnui"]:BeginFocus(panelId, {
+  maxDist = 7.0,
+  strict = true,              -- blocks a wider set of GTA controls while focused
+  drawCursor = true,          -- draws HUD cursor via library helper (optional)
+  autoExitOnMiss = true,      -- exit if you stop looking at / hitting the panel
+  missGraceMs = 250,          -- small grace so tiny ray misses don't instantly exit
+  exitControls = {200, 177},  -- ESC / BACKSPACE (default)
+  allowLook = true,           -- allow camera look while focused (recommended)
+  sendFocusMessages = true    -- sends focus_on/focus_off messages to the DUI
+})
+
+-- manually end focus (also ends automatically if autoExitOnMiss triggers)
+exports["cr-3dnui"]:EndFocus()
+```
+
+### Configure which keys to forward
+
+```lua
+exports["cr-3dnui"]:SetFocusKeymap({
+  { id = 32, key = "W" },
+  { id = 33, key = "S" },
+  { id = 34, key = "A" },
+  { id = 35, key = "D" },
+  { id = 172, key = "UP" },
+  { id = 173, key = "DOWN" },
+  { id = 174, key = "LEFT" },
+  { id = 175, key = "RIGHT" },
+  { id = 22, key = "SPACE" },
+})
+```
+
+Keys are forwarded into the DUI as:
+
+```json
+{ "type": "key", "key": "W", "code": 32 }
+```
+
+And can be handled inside your UI via:
+
+```js
+window.addEventListener("message", (e) => {
+  const msg = e.data;
+  if (msg?.type === "key") {
+    // msg.key, msg.code
+  }
+
+  if (msg?.type === "focus_on") {
+    // optional: show a "focused" state in the UI
+  }
+
+  if (msg?.type === "focus_off") {
+    // optional: pause, hide cursor, etc.
+  }
+});
+```
+
+---
+
 ## Recommended interaction loop (pattern)
 
 A typical “use mode” loop looks like:
@@ -191,6 +275,8 @@ Start at `1024×512` (wide) or `1024×1024` (square). Increase only if:
 - hover/click feels “steppy”
 - text is hard to read at the intended viewing distance
 
+---
+
 ## Status
 
 This repository contains:
@@ -199,11 +285,10 @@ This repository contains:
   - live DUI rendering on world quads
   - raycast → UV mapping
   - message + native mouse injection helpers
-- A working whiteboard demo proving:
-  - in-world drawing (drag)
-  - UI controls (buttons/sliders)
-  - DUI-safe dropdown patterns
-  - text placement via onscreen keyboard commit
+  - focus + keyboard input forwarding helpers
+- Example demos proving:
+  - in-world drawing (drag) + UI controls (whiteboard)
+  - keyboard-driven gameplay on a world-space arcade panel (snake)
 
 The API will continue evolving as more examples and higher-level helpers are added.
 

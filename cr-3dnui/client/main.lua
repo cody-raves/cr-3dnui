@@ -1,13 +1,14 @@
 -- cr-3dnui (library)
 -- Renders DUI-backed HTML pages on arbitrary world-space quads,
--- raycast -> UV helpers, and optional native mouse injection for drag.
+-- raycast -> UV helpers, optional native mouse injection, and (NEW) focus + keyboard capture helpers.
 
 local PANELS = {}
 local NEXT_ID = 1
 
 -------------------------------------------------------------
 -- Built-in HUD cursor (optional helper)
--- NOTE: The API does NOT force-draw a cursor; consuming resources call DrawCursor().
+-- NOTE: The API does NOT force-draw a cursor; consuming resources call DrawCursor()
+-- or you can enable it via BeginFocus({ drawCursor = true }).
 -------------------------------------------------------------
 local CURSOR = {
   txd = "cr3dnui_cursor_txd",
@@ -16,10 +17,8 @@ local CURSOR = {
 }
 
 CreateThread(function()
-  -- wait one frame so runtime txd creation is safe
   Wait(0)
   local txd = CreateRuntimeTxd(CURSOR.txd)
-  -- cursor tip should be at top-left pixel (0,0) in the PNG
   CreateRuntimeTextureFromImage(txd, CURSOR.tex, "assets/cursor.png")
   CURSOR.ready = true
 end)
@@ -35,12 +34,9 @@ exports("DrawCursor", function(cx, cy, isHit, opts)
   local w = opts.w or 0.015
   local h = opts.h or 0.03
 
-  -- hotspot in normalized sprite space (0..1).
-  -- for classic arrow cursor with tip at top-left: tipX=0, tipY=0
   local tipX = opts.tipX or 0.0
   local tipY = opts.tipY or 0.0
 
-  -- DrawSprite is centered; offset so (cx,cy) lands on hotspot.
   local drawX = (cx or 0.5) + (w * (0.5 - tipX))
   local drawY = (cy or 0.5) + (h * (0.5 - tipY))
 
@@ -228,7 +224,7 @@ local function uvToPixels(panel, u, v, flipY)
 end
 
 -------------------------------------------------------------
--- EXPORTS (client)
+-- EXPORTS (client): Panel lifecycle
 -------------------------------------------------------------
 exports("CreatePanel", function(opts)
   opts = opts or {}
@@ -310,7 +306,9 @@ exports("RaycastPanel", function(panelId, maxDist)
   return raycastPanelUV(panel, maxDist)
 end)
 
--- Original message-based click (good for menus)
+-------------------------------------------------------------
+-- EXPORTS: Message + native mouse injection
+-------------------------------------------------------------
 exports("SendClick", function(panelId, u, v, meta)
   local panel = PANELS[tostring(panelId)]
   if not panel or not panel.dui then return false end
@@ -326,7 +324,6 @@ exports("SendMessage", function(panelId, messageTable)
   return true
 end)
 
--- Native mouse injection (enables drag, hover, WebAudio gesture unlock, etc.)
 exports("SendMouseMove", function(panelId, u, v, opts)
   local panel = PANELS[tostring(panelId)]
   if not panel or not panel.dui then return false end
@@ -366,6 +363,169 @@ exports("GetPanelOwner", function(panelId)
 end)
 
 -------------------------------------------------------------
+-- NEW EXPORT: Find best hit among ALL panels
+-- Returns: panelId, hitPos, u, v, t
+-------------------------------------------------------------
+exports("RaycastPanels", function(maxDist)
+  local bestId, bestHit, bestU, bestV, bestT = nil, nil, nil, nil, nil
+  for id, panel in pairs(PANELS) do
+    local hitPos, u, v, t = raycastPanelUV(panel, maxDist)
+    if hitPos then
+      if not bestT or t < bestT then
+        bestId, bestHit, bestU, bestV, bestT = tonumber(id) or id, hitPos, u, v, t
+      end
+    end
+  end
+  if not bestId then return nil end
+  return bestId, bestHit, bestU, bestV, bestT
+end)
+
+-------------------------------------------------------------
+-- NEW: Focus + keyboard capture helper
+-- Design: the resource chooses when to BeginFocus() (e.g. G),
+-- and the library runs the per-frame capture until EndFocus().
+--
+-- While focused and ray hits the target panel, it can:
+--  - block all GTA/server binds (strict)
+--  - allow look + ESC/back to exit
+--  - forward key presses to the DUI via SendMessage(type="key")
+-------------------------------------------------------------
+local FOCUS = {
+  enabled = false,
+  panelId = nil,
+  opts = {},
+  keymap = {},
+  lastHit = false,
+  missSince = 0,
+}
+
+local function nowMs()
+  return GetGameTimer()
+end
+
+--- BeginFocus(panelId, opts)
+--- opts = {
+---   maxDist = 7.0,
+---   strict = true,                 -- DisableAllControlActions(0)
+---   drawCursor = true,
+---   autoExitOnMiss = true,
+---   missGraceMs = 250,
+---   exitControls = {200,177},      -- ESC/back
+---   allowLook = true,
+---   allowPause = true,            -- enable exitControls
+---   sendFocusMessages = false,     -- send {type="focus",state=true/false}
+--- }
+exports("BeginFocus", function(panelId, opts)
+  if not panelId then return false end
+  if not PANELS[tostring(panelId)] then return false end
+  FOCUS.enabled = true
+  FOCUS.panelId = panelId
+  FOCUS.opts = opts or {}
+  FOCUS.lastHit = false
+  FOCUS.missSince = 0
+  return true
+end)
+
+exports("EndFocus", function()
+  if FOCUS.enabled and FOCUS.opts and FOCUS.opts.sendFocusMessages and FOCUS.panelId then
+    exports["cr-3dnui"]:SendMessage(FOCUS.panelId, { type = "focus", state = false })
+  end
+  FOCUS.enabled = false
+  FOCUS.panelId = nil
+  FOCUS.opts = {}
+  FOCUS.lastHit = false
+  FOCUS.missSince = 0
+  return true
+end)
+
+exports("IsFocused", function()
+  return FOCUS.enabled == true, FOCUS.panelId
+end)
+
+--- SetFocusKeymap(keymap)
+--- keymap is an array of { id = <controlId>, key = <string> }
+exports("SetFocusKeymap", function(keymap)
+  FOCUS.keymap = keymap or {}
+  return true
+end)
+
+--- FocusTick()
+--- Returns: focusedHit(boolean), u, v
+exports("FocusTick", function()
+  if not FOCUS.enabled or not FOCUS.panelId then return false end
+  local panel = PANELS[tostring(FOCUS.panelId)]
+  if not panel then return false end
+
+  local opts = FOCUS.opts or {}
+  local maxDist = opts.maxDist or 7.0
+  local hitPos, u, v, t = raycastPanelUV(panel, maxDist)
+
+  local hit = hitPos ~= nil
+  local tNow = nowMs()
+
+  if not hit then
+    if FOCUS.lastHit then
+      FOCUS.lastHit = false
+      if opts.sendFocusMessages then
+        exports["cr-3dnui"]:SendMessage(FOCUS.panelId, { type = "focus", state = false })
+      end
+      FOCUS.missSince = tNow
+    end
+
+    if (opts.autoExitOnMiss ~= false) then
+      local grace = opts.missGraceMs or 250
+      if FOCUS.missSince ~= 0 and (tNow - FOCUS.missSince) >= grace then
+        exports["cr-3dnui"]:EndFocus()
+      end
+    end
+
+    return false
+  end
+
+  -- hit
+  if not FOCUS.lastHit then
+    FOCUS.lastHit = true
+    FOCUS.missSince = 0
+    if opts.sendFocusMessages then
+      exports["cr-3dnui"]:SendMessage(FOCUS.panelId, { type = "focus", state = true })
+    end
+  end
+
+  if opts.drawCursor then
+    exports["cr-3dnui"]:DrawCursor(0.5, 0.5, true)
+  end
+
+  if opts.strict then
+    DisableAllControlActions(0)
+  end
+
+  if opts.allowLook ~= false then
+    EnableControlAction(0, 1, true) -- LOOK_LR
+    EnableControlAction(0, 2, true) -- LOOK_UD
+  end
+
+  if opts.allowPause ~= false then
+    local exits = opts.exitControls or {200, 177}
+    for _, cid in ipairs(exits) do
+      EnableControlAction(0, cid, true)
+      if IsDisabledControlJustPressed(0, cid) or IsControlJustPressed(0, cid) then
+        exports["cr-3dnui"]:EndFocus()
+        return false
+      end
+    end
+  end
+
+  -- forward key presses (press-only)
+  for _, k in ipairs(FOCUS.keymap or {}) do
+    if IsDisabledControlJustPressed(0, k.id) or IsControlJustPressed(0, k.id) then
+      exports["cr-3dnui"]:SendMessage(FOCUS.panelId, { type = "key", key = k.key, code = k.id })
+    end
+  end
+
+  return true, u, v
+end)
+
+-------------------------------------------------------------
 -- Render loop
 -------------------------------------------------------------
 CreateThread(function()
@@ -373,6 +533,16 @@ CreateThread(function()
     Wait(0)
     for _, panel in pairs(PANELS) do
       drawPanel(panel)
+    end
+  end
+end)
+
+-- Focus loop (calls FocusTick every frame if enabled)
+CreateThread(function()
+  while true do
+    Wait(0)
+    if FOCUS.enabled then
+      exports["cr-3dnui"]:FocusTick()
     end
   end
 end)
@@ -386,6 +556,8 @@ AddEventHandler("onResourceStop", function(resName)
       destroyDuiForPanel(panel)
     end
     PANELS = {}
+    FOCUS.enabled = false
+    FOCUS.panelId = nil
     return
   end
 
