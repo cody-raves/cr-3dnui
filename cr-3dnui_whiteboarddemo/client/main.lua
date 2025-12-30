@@ -6,6 +6,62 @@ local previewPanelId = nil
 
 local boards = {} -- { {ent=, panelId=} }
 
+-- =========================================================
+-- PERF TUNING (scales better with many boards)
+-- =========================================================
+-- These are defaults; you can override in config.lua
+local PERF = {
+  renderDistance      = Config.RenderDistance or 25.0,    -- meters
+  nearbyCacheInterval = Config.NearbyCacheInterval or 250,-- ms
+  playerPosInterval   = Config.PlayerPosInterval or 500,  -- ms
+  raycastThrottle     = Config.RaycastThrottle or 50,     -- ms between raycasts when not drawing
+  idleWait            = Config.IdleWait or 100,           -- ms when idle / nothing to do
+  placeIdleWait       = Config.PlaceIdleWait or 200,      -- ms when placement mode is off
+}
+
+-- Cached player position (updated on a timer to avoid GetEntityCoords every frame)
+local cachedPed = 0
+local cachedPos = vector3(0.0, 0.0, 0.0)
+
+-- Force-refresh cached player coords immediately (used on mode toggles)
+local function RefreshCachedPos()
+  cachedPed = PlayerPedId()
+  cachedPos = GetEntityCoords(cachedPed)
+end
+
+-- Nearby boards cache (updated on a timer, distance filtered)
+local nearbyBoards = {} -- array of board entries from `boards`
+local lastNearbyRefresh = 0
+
+-- Raycast throttle timer (prevents raycasting every frame when idle)
+local lastRaycastAt = 0
+
+-- Squared distance helper (avoids sqrt)
+local function vecDistSq(a, b)
+  local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+  return dx * dx + dy * dy + dz * dz
+end
+
+local function RefreshNearbyBoards()
+  local now = GetGameTimer()
+  if (now - lastNearbyRefresh) < PERF.nearbyCacheInterval then return end
+  lastNearbyRefresh = now
+
+  nearbyBoards = {}
+  local maxSq = PERF.renderDistance * PERF.renderDistance
+
+  for i = 1, #boards do
+    local b = boards[i]
+    if b and b.ent and DoesEntityExist(b.ent) then
+      local p = GetEntityCoords(b.ent)
+      if vecDistSq(cachedPos, p) <= maxSq then
+        nearbyBoards[#nearbyBoards + 1] = b
+      end
+    end
+  end
+end
+
+
 local panelScale = 1.0
 
 -- =========================================================
@@ -418,12 +474,27 @@ RegisterCommand("wbwipe", function()
   notify("Deleted all placed whiteboards.")
 end, false)
 
+
+-------------------------------------------------------------
+-- Player position cache (perf)
+-------------------------------------------------------------
+CreateThread(function()
+  while true do
+    cachedPed = PlayerPedId()
+    cachedPos = GetEntityCoords(cachedPed)
+    Wait(PERF.playerPosInterval)
+  end
+end)
+
 -------------------------------------------------------------
 -- Placement update loop (preview follows raycast)
 -------------------------------------------------------------
 CreateThread(function()
   while true do
-    Wait(0)
+    if not (placingMode and previewBoard and previewPanelId) then
+      Wait(PERF.placeIdleWait)
+    else
+      Wait(0)
 
     if placingMode and previewBoard and previewPanelId then
       local hit, hitPos, hitNormal = RaycastFromCamera(Config.PlaceDistance)
@@ -461,6 +532,7 @@ CreateThread(function()
       if IsControlJustPressed(0, 15) then panelScale = math.min(2.5, panelScale + 0.05) end
       if IsControlJustPressed(0, 14) then panelScale = math.max(0.4, panelScale - 0.05) end
     end
+    end
   end
 end)
 
@@ -468,77 +540,100 @@ end)
 -- Interaction loop: pick nearest hit among all panels
 -------------------------------------------------------------
 CreateThread(function()
-  local mouseDown = false
   local activePanel = nil
+  local lastBestPanel, lastBestU, lastBestV = nil, nil, nil
 
   while true do
-    Wait(0)
-
-    if not interactMode or #boards == 0 then
+    -- idle / reset state
+    if (not interactMode) or (#boards == 0) then
       if mouseDown and activePanel then
         exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
       end
       mouseDown = false
       activePanel = nil
+      lastBestPanel, lastBestU, lastBestV = nil, nil, nil
       lastHoveredPanel = nil
-      goto continue
-    end
+      Wait(PERF.idleWait)
+    else
+      -- keep caches fresh
+      RefreshCachedPos()
+      RefreshNearbyBoards()
 
-    local best = nil
-    local bestU, bestV, bestT = nil, nil, nil
+      if #nearbyBoards == 0 then
+        -- nothing near the player, don't spin
+        DrawAimIndicator(false)
+        Wait(0)
+      else
+        local bestPanel, bestU, bestV, bestT = nil, nil, nil, nil
 
-    for _, b in ipairs(boards) do
-      local hitPos, u, v, t = exports["cr-3dnui"]:RaycastPanel(b.panelId, Config.PlaceDistance)
-      if hitPos and t then
-        if not bestT or t < bestT then
-          best = b.panelId
-          bestU, bestV, bestT = u, v, t
+        -- Throttle raycasts when not actively drawing.
+        local now = GetGameTimer()
+        local canRaycast = mouseDown or ((now - lastRaycastAt) >= PERF.raycastThrottle)
+        if canRaycast then
+          lastRaycastAt = now
+
+          for i = 1, #nearbyBoards do
+            local b = nearbyBoards[i]
+            if b and b.panelId then
+              local hitPos, u, v, t = exports["cr-3dnui"]:RaycastPanel(b.panelId, Config.PlaceDistance)
+              if hitPos and t then
+                if (not bestT) or (t < bestT) then
+                  bestPanel, bestU, bestV, bestT = b.panelId, u, v, t
+                end
+              end
+            end
+          end
+
+          lastBestPanel, lastBestU, lastBestV = bestPanel, bestU, bestV
+        else
+          -- reuse last results between raycasts
+          bestPanel, bestU, bestV = lastBestPanel, lastBestU, lastBestV
+        end
+
+        DrawAimIndicator(bestPanel ~= nil)
+
+        if not bestPanel then
+          lastHoveredPanel = nil
+          if mouseDown and activePanel then
+            exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
+            mouseDown = false
+          end
+          activePanel = nil
+          Wait(0)
+        else
+          activePanel = bestPanel
+          lastHoveredPanel = bestPanel
+
+          -- prevent weapon fire/aim
+          DisableControlAction(0, 24, true)
+          DisableControlAction(0, 25, true)
+          DisableControlAction(0, 257, true)
+
+          -- If text entry is active, do NOT keep drawing/dragging.
+          if textEntry.active then
+            if mouseDown and activePanel then
+              exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
+              mouseDown = false
+            end
+            Wait(0)
+          else
+            exports["cr-3dnui"]:SendMouseMove(activePanel, bestU, bestV, { flipY = false })
+
+            if IsDisabledControlJustPressed(0, 24) then
+              mouseDown = true
+              exports["cr-3dnui"]:SendMouseDown(activePanel, "left")
+            end
+
+            if mouseDown and IsDisabledControlJustReleased(0, 24) then
+              mouseDown = false
+              exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
+            end
+
+            Wait(PERF.activeWait)
+          end
         end
       end
     end
-
-    DrawAimIndicator(best ~= nil)
-
-    if not best then
-      lastHoveredPanel = nil
-      if mouseDown and activePanel then
-        exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
-        mouseDown = false
-      end
-      activePanel = nil
-      goto continue
-    end
-
-    activePanel = best
-    lastHoveredPanel = best
-
-    -- prevent weapon fire/aim
-    DisableControlAction(0, 24, true)
-    DisableControlAction(0, 25, true)
-    DisableControlAction(0, 257, true)
-
-    -- If text entry is active, do NOT keep drawing/dragging.
-    if textEntry.active then
-      if mouseDown and activePanel then
-        exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
-        mouseDown = false
-      end
-      goto continue
-    end
-
-    exports["cr-3dnui"]:SendMouseMove(activePanel, bestU, bestV, { flipY = false })
-
-    if IsDisabledControlJustPressed(0, 24) then
-      mouseDown = true
-      exports["cr-3dnui"]:SendMouseDown(activePanel, "left")
-    end
-
-    if mouseDown and IsDisabledControlJustReleased(0, 24) then
-      mouseDown = false
-      exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
-    end
-
-    ::continue::
   end
 end)
 

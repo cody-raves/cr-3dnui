@@ -6,6 +6,40 @@ local PANELS = {}
 local NEXT_ID = 1
 
 -------------------------------------------------------------
+-- Performance config
+-------------------------------------------------------------
+local CONFIG = {
+  -- Maximum distance to render panels (meters)
+  renderDistance = 50.0,
+
+  -- How often to refresh cached player position (ms)
+  renderCheckInterval = 500,
+
+  -- Sleep when no panels are nearby (ms)
+  idleWait = 100,
+
+  -- Sleep when panels are being rendered (ms). Use 0 for full-frame rendering.
+  activeWait = 0,
+
+  -- Sleep for focus loop when focus is disabled (ms)
+  focusIdleWait = 100,
+}
+
+-- Cached player position (avoids calling GetEntityCoords every frame across loops)
+local _playerPos = vector3(0.0, 0.0, 0.0)
+local _nextPosUpdate = 0
+
+local function getPlayerPosCached()
+  local now = GetGameTimer()
+  if now >= _nextPosUpdate then
+    _playerPos = GetEntityCoords(PlayerPedId())
+    _nextPosUpdate = now + (CONFIG.renderCheckInterval or 500)
+  end
+  return _playerPos
+end
+
+
+-------------------------------------------------------------
 -- Built-in HUD cursor (optional helper)
 -- NOTE: The API does NOT force-draw a cursor; consuming resources call DrawCursor()
 -- or you can enable it via BeginFocus({ drawCursor = true }).
@@ -64,6 +98,11 @@ local function vecCross(a, b)
   )
 end
 local function vecLen(a) return math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z) end
+-- Fast squared distance (no sqrt) for comparisons
+local function vecDistSq(a, b)
+  local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+  return dx * dx + dy * dy + dz * dz
+end
 local function vecNorm(a)
   local len = vecLen(a)
   if len < 0.0001 then return vector3(0.0, 0.0, 0.0) end
@@ -528,21 +567,52 @@ end)
 -------------------------------------------------------------
 -- Render loop
 -------------------------------------------------------------
+-------------------------------------------------------------
+-- Render loop (distance culled + adaptive sleeps)
+-------------------------------------------------------------
 CreateThread(function()
+  local maxDist = CONFIG.renderDistance or 50.0
+  local maxDistSq = maxDist * maxDist
+
   while true do
-    Wait(0)
-    for _, panel in pairs(PANELS) do
-      drawPanel(panel)
+    local waitMs = CONFIG.idleWait or 100
+    local ppos = getPlayerPosCached()
+    local drewAny = false
+
+    -- If the user changes CONFIG.renderDistance at runtime, reflect it.
+    local cfgDist = CONFIG.renderDistance or 50.0
+    if cfgDist ~= maxDist then
+      maxDist = cfgDist
+      maxDistSq = maxDist * maxDist
     end
+
+    for _, panel in pairs(PANELS) do
+      if panel and panel.enabled and panel.dui then
+        -- Distance-based culling
+        if vecDistSq(ppos, panel.pos) <= maxDistSq then
+          drawPanel(panel)
+          drewAny = true
+        end
+      end
+    end
+
+    if drewAny then
+      waitMs = CONFIG.activeWait or 0
+    end
+
+    Wait(waitMs)
   end
 end)
-
--- Focus loop (calls FocusTick every frame if enabled)
+-------------------------------------------------------------
+-- Focus loop (only runs at 0ms when focused)
+-------------------------------------------------------------
 CreateThread(function()
   while true do
-    Wait(0)
     if FOCUS.enabled then
+      Wait(0)
       exports["cr-3dnui"]:FocusTick()
+    else
+      Wait(CONFIG.focusIdleWait or 100)
     end
   end
 end)

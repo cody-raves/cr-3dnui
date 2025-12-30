@@ -4,7 +4,7 @@ lua54 'yes'
 
 author 'codyraves'
 description 'Snake demo using cr-3dnui focus + keyboard exports'
-version '0.2.0'
+version '2.1'
 
 dependency 'cr-3dnui'
 

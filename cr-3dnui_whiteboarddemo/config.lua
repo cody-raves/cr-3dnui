@@ -36,3 +36,14 @@ Config.KeyToggleInteract = 'G'
 -- Extra vertical nudge (meters) applied along the board's UP vector after face-raycast.
 -- Use this to fine-tune if the panel is slightly too low/high.
 Config.PanelUpOffset = 0.0
+-- =========================================================
+-- Performance tuning (optional)
+-- =========================================================
+-- These defaults are chosen to keep the demo responsive while scaling better
+-- when many boards exist in the world. You can tweak them per server.
+Config.RenderDistance = Config.RenderDistance or 25.0        -- meters (only process boards within this range)
+Config.NearbyCacheInterval = Config.NearbyCacheInterval or 250 -- ms (how often we rebuild nearby board list)
+Config.PlayerPosInterval = Config.PlayerPosInterval or 500    -- ms (how often we refresh cached player coords)
+Config.RaycastThrottle = Config.RaycastThrottle or 50         -- ms (raycast frequency when not actively drawing)
+Config.IdleWait = Config.IdleWait or 100                      -- ms (sleep when idle / no hit)
+Config.PlaceIdleWait = Config.PlaceIdleWait or 200            -- ms (sleep when placement mode is off)
