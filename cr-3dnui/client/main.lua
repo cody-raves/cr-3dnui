@@ -265,13 +265,42 @@ end
 -------------------------------------------------------------
 -- EXPORTS (client): Panel lifecycle
 -------------------------------------------------------------
-exports("CreatePanel", function(opts)
+-------------------------------------------------------------
+-- NEW: Entity attachment helper (transform driver)
+-- Goal: allow "panels on vehicles/props/peds" without consumers
+-- spamming 0-tick export calls (expensive in resource monitor).
+--
+-- This helper does NOT render or focus anything. It only keeps
+-- panel.pos + panel.normal updated relative to an entity.
+-------------------------------------------------------------
+local ATTACHMENTS = {} -- [tostring(panelId)] = { entity, offset, localNormal, rotateNormal, updateInterval, nextUpdate, maxDistSq }
+local ATTACH_MAX_WAIT = 250
+
+local function asVec3(v, fallback)
+  if v == nil then return fallback end
+  if type(v) == "vector3" then return v end
+  if type(v) == "table" and v.x ~= nil and v.y ~= nil and v.z ~= nil then
+    return vector3(tonumber(v.x) or 0.0, tonumber(v.y) or 0.0, tonumber(v.z) or 0.0)
+  end
+  return fallback
+end
+
+local function localDirToWorld(ent, localDir)
+  local right, forward, up, _ = GetEntityMatrix(ent)
+  if not right or not forward or not up then
+    return vecNorm(localDir)
+  end
+  local w = vecAdd(vecMul(right, localDir.x), vecAdd(vecMul(forward, localDir.y), vecMul(up, localDir.z)))
+  return vecNorm(w)
+end
+
+local function createPanelInternal(opts, ownerOverride)
   opts = opts or {}
 
   local id = opts.id or NEXT_ID
   NEXT_ID = (type(id) == "number") and (id + 1) or (NEXT_ID + 1)
 
-  local owner = GetInvokingResource() or "unknown"
+  local owner = ownerOverride or "unknown"
   local panel = {
     id = id,
     owner = owner,
@@ -294,13 +323,24 @@ exports("CreatePanel", function(opts)
   createDuiForPanel(panel)
   PANELS[tostring(id)] = panel
   return id
+end
+
+local function destroyPanelInternal(panelId)
+  local key = tostring(panelId)
+  local panel = PANELS[key]
+  if not panel then return end
+
+  ATTACHMENTS[key] = nil
+  destroyDuiForPanel(panel)
+  PANELS[key] = nil
+end
+
+exports("CreatePanel", function(opts)
+  return createPanelInternal(opts or {}, GetInvokingResource() or "unknown")
 end)
 
 exports("DestroyPanel", function(panelId)
-  local panel = PANELS[tostring(panelId)]
-  if not panel then return end
-  destroyDuiForPanel(panel)
-  PANELS[tostring(panelId)] = nil
+  destroyPanelInternal(panelId)
 end)
 
 exports("SetPanelTransform", function(panelId, pos, normal)
@@ -337,6 +377,122 @@ exports("SetPanelEnabled", function(panelId, enabled)
   local panel = PANELS[tostring(panelId)]
   if not panel then return end
   panel.enabled = (enabled == true)
+end)
+
+exports("AttachPanelToEntity", function(opts)
+  opts = opts or {}
+
+  local ent = opts.entity
+  if not ent or ent == 0 or not DoesEntityExist(ent) then return nil end
+
+  local owner = GetInvokingResource() or "unknown"
+
+  -- Allow attaching an existing panel, or create + attach in one call.
+  local panelId = opts.panelId
+  if panelId then
+    if not PANELS[tostring(panelId)] then return nil end
+  else
+    local offset = asVec3(opts.offset or opts.localOffset, vector3(0.0, 0.0, 0.0))
+    local localNormal = asVec3(opts.localNormal, asVec3(opts.normal, vector3(0.0, 0.0, 1.0)))
+    local rotateNormal = (opts.rotateNormal == nil) and true or (opts.rotateNormal == true)
+
+    local posWorld = GetOffsetFromEntityInWorldCoords(ent, offset.x, offset.y, offset.z)
+    local normalWorld = rotateNormal and localDirToWorld(ent, localNormal) or vecNorm(localNormal)
+
+    panelId = createPanelInternal({
+      id = opts.id,
+      url = opts.url,
+      resW = opts.resW,
+      resH = opts.resH,
+      pos = posWorld,
+      normal = normalWorld,
+      width = opts.width,
+      height = opts.height,
+      alpha = opts.alpha,
+      enabled = opts.enabled,
+      zOffset = opts.zOffset,
+      faceCamera = opts.faceCamera,
+    }, owner)
+  end
+
+  local key = tostring(panelId)
+
+  local offset = asVec3(opts.offset or opts.localOffset, vector3(0.0, 0.0, 0.0))
+  local localNormal = asVec3(opts.localNormal, asVec3(opts.normal, vector3(0.0, 0.0, 1.0)))
+  local rotateNormal = (opts.rotateNormal == nil) and true or (opts.rotateNormal == true)
+
+  local interval = tonumber(opts.updateInterval or opts.interval or 16) or 16
+  if interval < 0 then interval = 0 end
+
+  local updateMaxDist = tonumber(opts.updateMaxDistance or opts.maxUpdateDistance)
+  local maxDistSq = updateMaxDist and (updateMaxDist * updateMaxDist) or nil
+
+  ATTACHMENTS[key] = {
+    entity = ent,
+    offset = offset,
+    localNormal = localNormal,
+    rotateNormal = rotateNormal,
+    updateInterval = interval,
+    nextUpdate = 0,
+    maxDistSq = maxDistSq,
+  }
+
+  -- Snap immediately.
+  local panel = PANELS[key]
+  if panel then
+    panel.pos = GetOffsetFromEntityInWorldCoords(ent, offset.x, offset.y, offset.z)
+    panel.normal = rotateNormal and localDirToWorld(ent, localNormal) or vecNorm(localNormal)
+  end
+
+  return panelId
+end)
+
+-- Attachment update loop (single driver for all entity-attached panels)
+CreateThread(function()
+  while true do
+    if next(ATTACHMENTS) == nil then
+      Wait(ATTACH_MAX_WAIT)
+    else
+      local now = GetGameTimer()
+      local ppos = getPlayerPosCached()
+      local minWait = ATTACH_MAX_WAIT
+
+      for key, a in pairs(ATTACHMENTS) do
+        local panel = PANELS[key]
+        if not panel then
+          ATTACHMENTS[key] = nil
+        else
+          if not DoesEntityExist(a.entity) then
+            destroyPanelInternal(key)
+          else
+            if now >= (a.nextUpdate or 0) then
+              local doUpdate = true
+              if a.maxDistSq then
+                local epos = GetEntityCoords(a.entity)
+                doUpdate = vecDistSq(ppos, epos) <= a.maxDistSq
+              end
+
+              if doUpdate then
+                panel.pos = GetOffsetFromEntityInWorldCoords(a.entity, a.offset.x, a.offset.y, a.offset.z)
+                panel.normal = a.rotateNormal and localDirToWorld(a.entity, a.localNormal) or vecNorm(a.localNormal)
+              end
+
+              local step = a.updateInterval or 16
+              if step < 0 then step = 0 end
+              a.nextUpdate = now + step
+            end
+
+            local due = (a.nextUpdate or 0) - now
+            if due < minWait then minWait = due end
+          end
+        end
+      end
+
+      if minWait < 0 then minWait = 0 end
+      if minWait > ATTACH_MAX_WAIT then minWait = ATTACH_MAX_WAIT end
+      Wait(minWait)
+    end
+  end
 end)
 
 exports("RaycastPanel", function(panelId, maxDist)
@@ -626,15 +782,21 @@ AddEventHandler("onResourceStop", function(resName)
       destroyDuiForPanel(panel)
     end
     PANELS = {}
+    ATTACHMENTS = {}
     FOCUS.enabled = false
     FOCUS.panelId = nil
     return
   end
 
+  -- Collect first (avoid skipping entries while mutating PANELS during pairs)
+  local toDestroy = {}
   for id, panel in pairs(PANELS) do
     if panel.owner == resName then
-      destroyDuiForPanel(panel)
-      PANELS[id] = nil
+      toDestroy[#toDestroy + 1] = id
     end
+  end
+
+  for _, id in ipairs(toDestroy) do
+    destroyPanelInternal(id)
   end
 end)

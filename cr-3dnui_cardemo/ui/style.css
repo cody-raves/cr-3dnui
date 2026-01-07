@@ -1,0 +1,112 @@
+:root{
+  --bg: rgba(10, 14, 18, 0.82);
+  --edge: rgba(140, 190, 255, 0.28);
+  --text: rgba(240, 248, 255, 0.96);
+  --muted: rgba(240, 248, 255, 0.64);
+  --glow: rgba(120, 200, 255, 0.55);
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color: var(--text);
+}
+
+.card{
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 26px 32px;
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: 22px;
+  box-shadow: 0 0 18px rgba(120, 200, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  position: relative;
+}
+
+.card::after{
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 22px;
+  box-shadow: 0 0 30px rgba(120, 200, 255, 0.12);
+  pointer-events: none;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse{
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.65; }
+}
+
+.title{
+  font-size: 42px;
+  letter-spacing: 1.4px;
+  font-weight: 800;
+  text-transform: uppercase;
+  text-shadow: 0 0 16px rgba(120, 200, 255, 0.20);
+  margin-bottom: 2px;
+}
+
+.subtitle{
+  font-size: 22px;
+  font-weight: 650;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.stats{
+  display: flex;
+  gap: 16px;
+  margin-top: 6px;
+}
+
+.stat{
+  flex: 1;
+  border: 1px solid rgba(140, 190, 255, 0.18);
+  border-radius: 16px;
+  padding: 14px 14px 12px 14px;
+  background: rgba(255,255,255,0.03);
+}
+
+.label{
+  font-size: 14px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.value{
+  font-size: 44px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.unit{
+  margin-top: 4px;
+  font-size: 14px;
+  letter-spacing: 1.1px;
+  text-transform: uppercase;
+  color: rgba(120, 200, 255, 0.85);
+}
+
+.hint{
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--muted);
+  opacity: 0.9;
+}
+
+.mono{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  color: rgba(120, 200, 255, 0.95);
+}
