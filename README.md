@@ -341,6 +341,11 @@ Start at `1024×512` (wide) or `1024×1024` (square). Increase only if:
 
 ---
 
+# Credit
+**Optimizations:** [RobiRoberto](https://github.com/RobiRoberto)  
+Original write-up: [Amazing performance optimization report](https://github.com/cody-raves/cr-3dnui/issues/1)
+
+
 ## Status
 
 This repository contains:
