@@ -1,68 +1,18 @@
--- cr-3dnui (library)
+-- cr-3dnui (library) - client/main.lua
 -- Renders DUI-backed HTML pages on arbitrary world-space quads,
--- raycast -> UV helpers, optional native mouse injection, and (NEW) focus + keyboard capture helpers.
+-- raycast -> UV helpers, optional native mouse injection,
+-- focus + keyboard capture helpers, and entity attachment helper.
 
-local PANELS = {}
-local NEXT_ID = 1
+CR3D = CR3D or {}
 
--------------------------------------------------------------
--- Performance config
--------------------------------------------------------------
-local CONFIG = {
-  -- Maximum distance to render panels (meters)
-  renderDistance = 50.0,
-
-  -- How often to refresh cached player position (ms)
-  renderCheckInterval = 500,
-
-  -- Sleep when no panels are nearby (ms)
-  idleWait = 100,
-
-  -- Sleep when panels are being rendered (ms). Use 0 for full-frame rendering.
-  activeWait = 0,
-
-  -- Sleep for focus loop when focus is disabled (ms)
-  focusIdleWait = 100,
-}
-
--- Cached player position (avoids calling GetEntityCoords every frame across loops)
-local _playerPos = vector3(0.0, 0.0, 0.0)
-local _nextPosUpdate = 0
-
-local function getPlayerPosCached()
-  local now = GetGameTimer()
-  if now >= _nextPosUpdate then
-    _playerPos = GetEntityCoords(PlayerPedId())
-    _nextPosUpdate = now + (CONFIG.renderCheckInterval or 500)
-  end
-  return _playerPos
-end
-
+local PANELS = CR3D.PANELS
+local ATTACHMENTS = CR3D.ATTACHMENTS
 
 -------------------------------------------------------------
--- Built-in HUD cursor (optional helper)
--- NOTE: The API does NOT force-draw a cursor; consuming resources call DrawCursor()
--- or you can enable it via BeginFocus({ drawCursor = true }).
+-- Draw HUD cursor export
 -------------------------------------------------------------
-local CURSOR = {
-  txd = "cr3dnui_cursor_txd",
-  tex = "cursor",
-  ready = false
-}
-
-CreateThread(function()
-  Wait(0)
-  local txd = CreateRuntimeTxd(CURSOR.txd)
-  CreateRuntimeTextureFromImage(txd, CURSOR.tex, "assets/cursor.png")
-  CURSOR.ready = true
-end)
-
---- Draw a mouse cursor sprite on the HUD.
---- cx, cy are screen coords (0..1). For center, use 0.5, 0.5.
---- isHit toggles hit coloring (defaults to green when true).
---- opts = { w,h, tipX, tipY, r,g,b,a, hitR,hitG,hitB,hitA }
 exports("DrawCursor", function(cx, cy, isHit, opts)
-  if not CURSOR.ready then return false end
+  if not (CR3D.CURSOR and CR3D.CURSOR.ready) then return false end
   opts = opts or {}
 
   local w = opts.w or 0.015
@@ -79,147 +29,9 @@ exports("DrawCursor", function(cx, cy, isHit, opts)
     r, g, b, a = opts.hitR or 0, opts.hitG or 255, opts.hitB or 0, opts.hitA or 235
   end
 
-  DrawSprite(CURSOR.txd, CURSOR.tex, drawX, drawY, w, h, 0.0, r, g, b, a)
+  DrawSprite(CR3D.CURSOR.txd, CR3D.CURSOR.tex, drawX, drawY, w, h, 0.0, r, g, b, a)
   return true
 end)
-
--------------------------------------------------------------
--- Small vector helpers
--------------------------------------------------------------
-local function vecAdd(a, b) return vector3(a.x + b.x, a.y + b.y, a.z + b.z) end
-local function vecSub(a, b) return vector3(a.x - b.x, a.y - b.y, a.z - b.z) end
-local function vecMul(a, s) return vector3(a.x * s, a.y * s, a.z * s) end
-local function vecDot(a, b) return a.x * b.x + a.y * b.y + a.z * b.z end
-local function vecCross(a, b)
-  return vector3(
-    a.y * b.z - a.z * b.y,
-    a.z * b.x - a.x * b.z,
-    a.x * b.y - a.y * b.x
-  )
-end
-local function vecLen(a) return math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z) end
--- Fast squared distance (no sqrt) for comparisons
-local function vecDistSq(a, b)
-  local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
-  return dx * dx + dy * dy + dz * dz
-end
-local function vecNorm(a)
-  local len = vecLen(a)
-  if len < 0.0001 then return vector3(0.0, 0.0, 0.0) end
-  return vector3(a.x / len, a.y / len, a.z / len)
-end
-
--------------------------------------------------------------
--- camera → direction
--------------------------------------------------------------
-local function rotationToDirection(rot)
-  local radX = math.rad(rot.x)
-  local radZ = math.rad(rot.z)
-  local cosX = math.cos(radX)
-  local sinX = math.sin(radX)
-  local cosZ = math.cos(radZ)
-  local sinZ = math.sin(radZ)
-  return vector3(-sinZ * cosX, cosZ * cosX, sinX)
-end
-
--------------------------------------------------------------
--- Panel basis (center, normal, right, up, half extents)
--------------------------------------------------------------
-local function makePanelBasis(pos, normal, width, height, zOffset, faceCamera)
-  local planeNormal = vecNorm(normal)
-
-  if faceCamera then
-    local camPos = GetGameplayCamCoord()
-    local toCam = vecNorm(vecSub(camPos, pos))
-    if vecDot(toCam, planeNormal) < 0.0 then
-      planeNormal = vecMul(planeNormal, -1.0)
-    end
-  end
-
-  local center = vecAdd(pos, vecMul(planeNormal, zOffset or 0.002))
-
-  local worldUp = vector3(0.0, 0.0, 1.0)
-  local right = vecCross(worldUp, planeNormal)
-
-  if math.abs(right.x) < 0.001 and math.abs(right.y) < 0.001 and math.abs(right.z) < 0.001 then
-    worldUp = vector3(0.0, 1.0, 0.0)
-    right = vecCross(planeNormal, worldUp)
-  end
-
-  right = vecNorm(right)
-  local upWall = vecNorm(vecCross(right, planeNormal))
-
-  return {
-    center = center,
-    normal = planeNormal,
-    right  = right,
-    up     = upWall,
-    halfW  = (width * 0.5),
-    halfH  = (height * 0.5)
-  }
-end
-
--------------------------------------------------------------
--- Draw a single panel quad (2 tris)
--------------------------------------------------------------
-local function drawPanel(panel)
-  if not panel.enabled then return end
-  if not panel.dui then return end
-  if not panel.txdName or not panel.texName then return end
-
-  local basis = makePanelBasis(panel.pos, panel.normal, panel.width, panel.height, panel.zOffset, panel.faceCamera)
-  local center, right, upWall, halfW, halfH = basis.center, basis.right, basis.up, basis.halfW, basis.halfH
-
-  local v1 = vecAdd(center, vecAdd(vecMul(right, -halfW), vecMul(upWall,  halfH))) -- TL
-  local v2 = vecAdd(center, vecAdd(vecMul(right,  halfW), vecMul(upWall,  halfH))) -- TR
-  local v3 = vecAdd(center, vecAdd(vecMul(right,  halfW), vecMul(upWall, -halfH))) -- BR
-  local v4 = vecAdd(center, vecAdd(vecMul(right, -halfW), vecMul(upWall, -halfH))) -- BL
-
-  local r, g, b, a = 255, 255, 255, panel.alpha or 255
-
-  -- U flipped so text is not mirrored
-  DrawSpritePoly(v1.x,v1.y,v1.z, v2.x,v2.y,v2.z, v3.x,v3.y,v3.z,
-    r,g,b,a, panel.txdName, panel.texName,
-    0.0,1.0,1.0,  1.0,1.0,1.0,  1.0,0.0,1.0
-  )
-  DrawSpritePoly(v1.x,v1.y,v1.z, v3.x,v3.y,v3.z, v4.x,v4.y,v4.z,
-    r,g,b,a, panel.txdName, panel.texName,
-    0.0,1.0,1.0,  1.0,0.0,1.0,  0.0,0.0,1.0
-  )
-end
-
--------------------------------------------------------------
--- Raycast camera ray → hit on a panel (u,v in 0..1)
--- Returns: hitPos, u, v, t
--------------------------------------------------------------
-local function raycastPanelUV(panel, maxDist)
-  if not panel or not panel.enabled then return nil end
-
-  local basis = makePanelBasis(panel.pos, panel.normal, panel.width, panel.height, panel.zOffset, panel.faceCamera)
-  local center, normal, right, upWall, halfW, halfH = basis.center, basis.normal, basis.right, basis.up, basis.halfW, basis.halfH
-
-  local camPos = GetGameplayCamCoord()
-  local camRot = GetGameplayCamRot(2)
-  local dir = rotationToDirection(camRot)
-
-  local denom = vecDot(dir, normal)
-  if math.abs(denom) < 0.0001 then return nil end
-
-  local t = vecDot(vecSub(center, camPos), normal) / denom
-  if t < 0.0 then return nil end
-  if maxDist and t > maxDist then return nil end
-
-  local hitPos = vecAdd(camPos, vecMul(dir, t))
-  local rel = vecSub(hitPos, center)
-
-  local localX = vecDot(rel, right) / halfW
-  local localY = vecDot(rel, upWall) / halfH
-  if math.abs(localX) > 1.0 or math.abs(localY) > 1.0 then return nil end
-
-  local u = (localX + 1.0) * 0.5
-  local v = (localY + 1.0) * 0.5
-  return hitPos, u, v, t
-end
 
 -------------------------------------------------------------
 -- DUI creation / teardown
@@ -249,72 +61,46 @@ local function destroyDuiForPanel(panel)
 end
 
 -------------------------------------------------------------
--- Helpers: UV -> pixel coords for SendDuiMouse*
+-- Internal create/destroy
 -------------------------------------------------------------
-local function uvToPixels(panel, u, v, flipY)
-  local resW = panel.resW or 1024
-  local resH = panel.resH or 1024
-  local uu = math.min(1.0, math.max(0.0, u or 0.0))
-  local vv = math.min(1.0, math.max(0.0, v or 0.0))
-  if flipY then vv = 1.0 - vv end
-  local x = math.floor(uu * resW)
-  local y = math.floor(vv * resH)
-  return x, y
-end
-
--------------------------------------------------------------
--- EXPORTS (client): Panel lifecycle
--------------------------------------------------------------
--------------------------------------------------------------
--- NEW: Entity attachment helper (transform driver)
--- Goal: allow "panels on vehicles/props/peds" without consumers
--- spamming 0-tick export calls (expensive in resource monitor).
---
--- This helper does NOT render or focus anything. It only keeps
--- panel.pos + panel.normal updated relative to an entity.
--------------------------------------------------------------
-local ATTACHMENTS = {} -- [tostring(panelId)] = { entity, offset, localNormal, rotateNormal, updateInterval, nextUpdate, maxDistSq }
-local ATTACH_MAX_WAIT = 250
-
-local function asVec3(v, fallback)
-  if v == nil then return fallback end
-  if type(v) == "vector3" then return v end
-  if type(v) == "table" and v.x ~= nil and v.y ~= nil and v.z ~= nil then
-    return vector3(tonumber(v.x) or 0.0, tonumber(v.y) or 0.0, tonumber(v.z) or 0.0)
-  end
-  return fallback
-end
-
-local function localDirToWorld(ent, localDir)
-  local right, forward, up, _ = GetEntityMatrix(ent)
-  if not right or not forward or not up then
-    return vecNorm(localDir)
-  end
-  local w = vecAdd(vecMul(right, localDir.x), vecAdd(vecMul(forward, localDir.y), vecMul(up, localDir.z)))
-  return vecNorm(w)
-end
-
 local function createPanelInternal(opts, ownerOverride)
   opts = opts or {}
 
-  local id = opts.id or NEXT_ID
-  NEXT_ID = (type(id) == "number") and (id + 1) or (NEXT_ID + 1)
+  local id = opts.id or CR3D.NEXT_ID
+  CR3D.NEXT_ID = (type(id) == "number") and (id + 1) or (CR3D.NEXT_ID + 1)
 
   local owner = ownerOverride or "unknown"
   local panel = {
     id = id,
     owner = owner,
+
     url = opts.url,
     resW = opts.resW or 1024,
     resH = opts.resH or 1024,
+
     pos = opts.pos or vector3(0.0, 0.0, 0.0),
     normal = opts.normal or vector3(0.0, 0.0, 1.0),
+
     width = opts.width or 1.0,
     height = opts.height or 1.0,
+
     alpha = opts.alpha or 255,
     enabled = (opts.enabled == nil) and true or (opts.enabled == true),
-    zOffset = opts.zOffset or 0.002,
+
+    -- Optional depth bias. If nil, makePanelBasis will pick a safe default.
+    zOffset = opts.zOffset,
+
+    -- Optional helpers for "screen-like" surfaces:
+    -- depthCompensation = "screen" picks safer defaults for tilted monitor props.
+    depthCompensation = opts.depthCompensation,
+
+    -- Optional: render / interact only from the front side of the panel.
+    frontOnly = (opts.frontOnly == true),
+    frontDotMin = tonumber(opts.frontDotMin) or 0.0,
+
+    -- If nil, default true (matches legacy behavior)
     faceCamera = (opts.faceCamera == nil) and true or (opts.faceCamera == true),
+
     dui = nil,
     txdName = nil,
     texName = nil,
@@ -335,6 +121,9 @@ local function destroyPanelInternal(panelId)
   PANELS[key] = nil
 end
 
+-------------------------------------------------------------
+-- EXPORTS (client): Panel lifecycle
+-------------------------------------------------------------
 exports("CreatePanel", function(opts)
   return createPanelInternal(opts or {}, GetInvokingResource() or "unknown")
 end)
@@ -379,6 +168,52 @@ exports("SetPanelEnabled", function(panelId, enabled)
   panel.enabled = (enabled == true)
 end)
 
+-- NEW: Helpers
+exports("SetPanelFacing", function(panelId, frontOnly, frontDotMin)
+  local panel = PANELS[tostring(panelId)]
+  if not panel then return false end
+  panel.frontOnly = (frontOnly == true)
+  if frontDotMin ~= nil then
+    panel.frontDotMin = tonumber(frontDotMin) or (panel.frontDotMin or 0.0)
+  end
+  return true
+end)
+
+exports("SetPanelDepthCompensation", function(panelId, mode)
+  local panel = PANELS[tostring(panelId)]
+  if not panel then return false end
+  panel.depthCompensation = mode -- nil | "screen"
+  return true
+end)
+
+exports("SetPanelZOffset", function(panelId, zOffset)
+  local panel = PANELS[tostring(panelId)]
+  if not panel then return false end
+  panel.zOffset = zOffset -- can be nil to use defaults from depthCompensation
+  return true
+end)
+
+-------------------------------------------------------------
+-- Attachment helper (transform driver)
+-------------------------------------------------------------
+local function asVec3(v, fallback)
+  if v == nil then return fallback end
+  if type(v) == "vector3" then return v end
+  if type(v) == "table" and v.x ~= nil and v.y ~= nil and v.z ~= nil then
+    return vector3(tonumber(v.x) or 0.0, tonumber(v.y) or 0.0, tonumber(v.z) or 0.0)
+  end
+  return fallback
+end
+
+local function localDirToWorld(ent, localDir)
+  local right, forward, up, _ = GetEntityMatrix(ent)
+  if not right or not forward or not up then
+    return CR3D.vecNorm(localDir)
+  end
+  local w = CR3D.vecAdd(CR3D.vecMul(right, localDir.x), CR3D.vecAdd(CR3D.vecMul(forward, localDir.y), CR3D.vecMul(up, localDir.z)))
+  return CR3D.vecNorm(w)
+end
+
 exports("AttachPanelToEntity", function(opts)
   opts = opts or {}
 
@@ -397,7 +232,7 @@ exports("AttachPanelToEntity", function(opts)
     local rotateNormal = (opts.rotateNormal == nil) and true or (opts.rotateNormal == true)
 
     local posWorld = GetOffsetFromEntityInWorldCoords(ent, offset.x, offset.y, offset.z)
-    local normalWorld = rotateNormal and localDirToWorld(ent, localNormal) or vecNorm(localNormal)
+    local normalWorld = rotateNormal and localDirToWorld(ent, localNormal) or CR3D.vecNorm(localNormal)
 
     panelId = createPanelInternal({
       id = opts.id,
@@ -410,7 +245,11 @@ exports("AttachPanelToEntity", function(opts)
       height = opts.height,
       alpha = opts.alpha,
       enabled = opts.enabled,
+
       zOffset = opts.zOffset,
+      depthCompensation = opts.depthCompensation,
+      frontOnly = opts.frontOnly,
+      frontDotMin = opts.frontDotMin,
       faceCamera = opts.faceCamera,
     }, owner)
   end
@@ -440,69 +279,45 @@ exports("AttachPanelToEntity", function(opts)
   -- Snap immediately.
   local panel = PANELS[key]
   if panel then
+    -- Allow updating helper options on attach calls (handy for tuning).
+    if opts.zOffset ~= nil then panel.zOffset = opts.zOffset end
+    if opts.depthCompensation ~= nil then panel.depthCompensation = opts.depthCompensation end
+    if opts.frontOnly ~= nil then panel.frontOnly = (opts.frontOnly == true) end
+    if opts.frontDotMin ~= nil then panel.frontDotMin = tonumber(opts.frontDotMin) or (panel.frontDotMin or 0.0) end
+    if opts.faceCamera ~= nil then panel.faceCamera = (opts.faceCamera == true) end
+
     panel.pos = GetOffsetFromEntityInWorldCoords(ent, offset.x, offset.y, offset.z)
-    panel.normal = rotateNormal and localDirToWorld(ent, localNormal) or vecNorm(localNormal)
+    panel.normal = rotateNormal and localDirToWorld(ent, localNormal) or CR3D.vecNorm(localNormal)
   end
 
   return panelId
 end)
 
--- Attachment update loop (single driver for all entity-attached panels)
-CreateThread(function()
-  while true do
-    if next(ATTACHMENTS) == nil then
-      Wait(ATTACH_MAX_WAIT)
-    else
-      local now = GetGameTimer()
-      local ppos = getPlayerPosCached()
-      local minWait = ATTACH_MAX_WAIT
-
-      for key, a in pairs(ATTACHMENTS) do
-        local panel = PANELS[key]
-        if not panel then
-          ATTACHMENTS[key] = nil
-        else
-          if not DoesEntityExist(a.entity) then
-            destroyPanelInternal(key)
-          else
-            if now >= (a.nextUpdate or 0) then
-              local doUpdate = true
-              if a.maxDistSq then
-                local epos = GetEntityCoords(a.entity)
-                doUpdate = vecDistSq(ppos, epos) <= a.maxDistSq
-              end
-
-              if doUpdate then
-                panel.pos = GetOffsetFromEntityInWorldCoords(a.entity, a.offset.x, a.offset.y, a.offset.z)
-                panel.normal = a.rotateNormal and localDirToWorld(a.entity, a.localNormal) or vecNorm(a.localNormal)
-              end
-
-              local step = a.updateInterval or 16
-              if step < 0 then step = 0 end
-              a.nextUpdate = now + step
-            end
-
-            local due = (a.nextUpdate or 0) - now
-            if due < minWait then minWait = due end
-          end
-        end
-      end
-
-      if minWait < 0 then minWait = 0 end
-      if minWait > ATTACH_MAX_WAIT then minWait = ATTACH_MAX_WAIT end
-      Wait(minWait)
-    end
-  end
-end)
-
+-------------------------------------------------------------
+-- EXPORTS: Raycast helpers
+-------------------------------------------------------------
 exports("RaycastPanel", function(panelId, maxDist)
   local panel = PANELS[tostring(panelId)]
   if not panel then return nil end
-  return raycastPanelUV(panel, maxDist)
+  return CR3D.raycastPanelUV(panel, maxDist)
+end)
+
+exports("RaycastPanels", function(maxDist)
+  local bestId, bestHit, bestU, bestV, bestT = nil, nil, nil, nil, nil
+  for id, panel in pairs(PANELS) do
+    local hitPos, u, v, t = CR3D.raycastPanelUV(panel, maxDist)
+    if hitPos then
+      if not bestT or t < bestT then
+        bestId, bestHit, bestU, bestV, bestT = tonumber(id) or id, hitPos, u, v, t
+      end
+    end
+  end
+  if not bestId then return nil end
+  return bestId, bestHit, bestU, bestV, bestT
 end)
 
 -------------------------------------------------------------
--- EXPORTS: Message + native mouse injection
+-- EXPORTS: Message + native mouse injection (UV path)
 -------------------------------------------------------------
 exports("SendClick", function(panelId, u, v, meta)
   local panel = PANELS[tostring(panelId)]
@@ -523,7 +338,7 @@ exports("SendMouseMove", function(panelId, u, v, opts)
   local panel = PANELS[tostring(panelId)]
   if not panel or not panel.dui then return false end
   opts = opts or {}
-  local x, y = uvToPixels(panel, u, v, opts.flipY == true)
+  local x, y = CR3D.uvToPixels(panel, u, v, opts.flipY == true)
   SendDuiMouseMove(panel.dui, x, y)
   return true
 end)
@@ -558,185 +373,94 @@ exports("GetPanelOwner", function(panelId)
 end)
 
 -------------------------------------------------------------
--- NEW EXPORT: Find best hit among ALL panels
--- Returns: panelId, hitPos, u, v, t
+-- EXPORTS: Focus wrappers (raycast/UV focus)
 -------------------------------------------------------------
-exports("RaycastPanels", function(maxDist)
-  local bestId, bestHit, bestU, bestV, bestT = nil, nil, nil, nil, nil
-  for id, panel in pairs(PANELS) do
-    local hitPos, u, v, t = raycastPanelUV(panel, maxDist)
-    if hitPos then
-      if not bestT or t < bestT then
-        bestId, bestHit, bestU, bestV, bestT = tonumber(id) or id, hitPos, u, v, t
-      end
-    end
-  end
-  if not bestId then return nil end
-  return bestId, bestHit, bestU, bestV, bestT
-end)
-
--------------------------------------------------------------
--- NEW: Focus + keyboard capture helper
--- Design: the resource chooses when to BeginFocus() (e.g. G),
--- and the library runs the per-frame capture until EndFocus().
---
--- While focused and ray hits the target panel, it can:
---  - block all GTA/server binds (strict)
---  - allow look + ESC/back to exit
---  - forward key presses to the DUI via SendMessage(type="key")
--------------------------------------------------------------
-local FOCUS = {
-  enabled = false,
-  panelId = nil,
-  opts = {},
-  keymap = {},
-  lastHit = false,
-  missSince = 0,
-}
-
-local function nowMs()
-  return GetGameTimer()
-end
-
---- BeginFocus(panelId, opts)
---- opts = {
----   maxDist = 7.0,
----   strict = true,                 -- DisableAllControlActions(0)
----   drawCursor = true,
----   autoExitOnMiss = true,
----   missGraceMs = 250,
----   exitControls = {200,177},      -- ESC/back
----   allowLook = true,
----   allowPause = true,            -- enable exitControls
----   sendFocusMessages = false,     -- send {type="focus",state=true/false}
---- }
 exports("BeginFocus", function(panelId, opts)
-  if not panelId then return false end
-  if not PANELS[tostring(panelId)] then return false end
-  FOCUS.enabled = true
-  FOCUS.panelId = panelId
-  FOCUS.opts = opts or {}
-  FOCUS.lastHit = false
-  FOCUS.missSince = 0
-  return true
+  return CR3D.BeginFocus(panelId, opts)
 end)
 
 exports("EndFocus", function()
-  if FOCUS.enabled and FOCUS.opts and FOCUS.opts.sendFocusMessages and FOCUS.panelId then
-    exports["cr-3dnui"]:SendMessage(FOCUS.panelId, { type = "focus", state = false })
-  end
-  FOCUS.enabled = false
-  FOCUS.panelId = nil
-  FOCUS.opts = {}
-  FOCUS.lastHit = false
-  FOCUS.missSince = 0
-  return true
+  return CR3D.EndFocus()
 end)
 
 exports("IsFocused", function()
-  return FOCUS.enabled == true, FOCUS.panelId
+  return CR3D.IsFocused()
 end)
 
---- SetFocusKeymap(keymap)
---- keymap is an array of { id = <controlId>, key = <string> }
 exports("SetFocusKeymap", function(keymap)
-  FOCUS.keymap = keymap or {}
-  return true
+  return CR3D.SetFocusKeymap(keymap)
 end)
 
---- FocusTick()
---- Returns: focusedHit(boolean), u, v
 exports("FocusTick", function()
-  if not FOCUS.enabled or not FOCUS.panelId then return false end
-  local panel = PANELS[tostring(FOCUS.panelId)]
-  if not panel then return false end
-
-  local opts = FOCUS.opts or {}
-  local maxDist = opts.maxDist or 7.0
-  local hitPos, u, v, t = raycastPanelUV(panel, maxDist)
-
-  local hit = hitPos ~= nil
-  local tNow = nowMs()
-
-  if not hit then
-    if FOCUS.lastHit then
-      FOCUS.lastHit = false
-      if opts.sendFocusMessages then
-        exports["cr-3dnui"]:SendMessage(FOCUS.panelId, { type = "focus", state = false })
-      end
-      FOCUS.missSince = tNow
-    end
-
-    if (opts.autoExitOnMiss ~= false) then
-      local grace = opts.missGraceMs or 250
-      if FOCUS.missSince ~= 0 and (tNow - FOCUS.missSince) >= grace then
-        exports["cr-3dnui"]:EndFocus()
-      end
-    end
-
-    return false
-  end
-
-  -- hit
-  if not FOCUS.lastHit then
-    FOCUS.lastHit = true
-    FOCUS.missSince = 0
-    if opts.sendFocusMessages then
-      exports["cr-3dnui"]:SendMessage(FOCUS.panelId, { type = "focus", state = true })
-    end
-  end
-
-  if opts.drawCursor then
-    exports["cr-3dnui"]:DrawCursor(0.5, 0.5, true)
-  end
-
-  if opts.strict then
-    DisableAllControlActions(0)
-  end
-
-  if opts.allowLook ~= false then
-    EnableControlAction(0, 1, true) -- LOOK_LR
-    EnableControlAction(0, 2, true) -- LOOK_UD
-  end
-
-  if opts.allowPause ~= false then
-    local exits = opts.exitControls or {200, 177}
-    for _, cid in ipairs(exits) do
-      EnableControlAction(0, cid, true)
-      if IsDisabledControlJustPressed(0, cid) or IsControlJustPressed(0, cid) then
-        exports["cr-3dnui"]:EndFocus()
-        return false
-      end
-    end
-  end
-
-  -- forward key presses (press-only)
-  for _, k in ipairs(FOCUS.keymap or {}) do
-    if IsDisabledControlJustPressed(0, k.id) or IsControlJustPressed(0, k.id) then
-      exports["cr-3dnui"]:SendMessage(FOCUS.panelId, { type = "key", key = k.key, code = k.id })
-    end
-  end
-
-  return true, u, v
+  return CR3D.FocusTick()
 end)
 
 -------------------------------------------------------------
--- Render loop
+-- Attachment update loop (single driver for all entity-attached panels)
 -------------------------------------------------------------
+CreateThread(function()
+  local ATTACH_MAX_WAIT = CR3D.ATTACH_MAX_WAIT or 250
+
+  while true do
+    if next(ATTACHMENTS) == nil then
+      Wait(ATTACH_MAX_WAIT)
+    else
+      local now = GetGameTimer()
+      local ppos = CR3D.getPlayerPosCached()
+      local minWait = ATTACH_MAX_WAIT
+
+      for key, a in pairs(ATTACHMENTS) do
+        local panel = PANELS[key]
+        if not panel then
+          ATTACHMENTS[key] = nil
+        else
+          if not DoesEntityExist(a.entity) then
+            destroyPanelInternal(key)
+          else
+            if now >= (a.nextUpdate or 0) then
+              local doUpdate = true
+              if a.maxDistSq then
+                local epos = GetEntityCoords(a.entity)
+                doUpdate = CR3D.vecDistSq(ppos, epos) <= a.maxDistSq
+              end
+
+              if doUpdate then
+                panel.pos = GetOffsetFromEntityInWorldCoords(a.entity, a.offset.x, a.offset.y, a.offset.z)
+                panel.normal = a.rotateNormal and localDirToWorld(a.entity, a.localNormal) or CR3D.vecNorm(a.localNormal)
+              end
+
+              local step = a.updateInterval or 16
+              if step < 0 then step = 0 end
+              a.nextUpdate = now + step
+            end
+
+            local due = (a.nextUpdate or 0) - now
+            if due < minWait then minWait = due end
+          end
+        end
+      end
+
+      if minWait < 0 then minWait = 0 end
+      if minWait > ATTACH_MAX_WAIT then minWait = ATTACH_MAX_WAIT end
+      Wait(minWait)
+    end
+  end
+end)
+
 -------------------------------------------------------------
 -- Render loop (distance culled + adaptive sleeps)
 -------------------------------------------------------------
 CreateThread(function()
-  local maxDist = CONFIG.renderDistance or 50.0
+  local maxDist = (CR3D.CONFIG and CR3D.CONFIG.renderDistance) or 50.0
   local maxDistSq = maxDist * maxDist
 
   while true do
-    local waitMs = CONFIG.idleWait or 100
-    local ppos = getPlayerPosCached()
+    local waitMs = (CR3D.CONFIG and CR3D.CONFIG.idleWait) or 100
+    local ppos = CR3D.getPlayerPosCached()
     local drewAny = false
 
-    -- If the user changes CONFIG.renderDistance at runtime, reflect it.
-    local cfgDist = CONFIG.renderDistance or 50.0
+    -- If user changes CONFIG.renderDistance at runtime, reflect it.
+    local cfgDist = (CR3D.CONFIG and CR3D.CONFIG.renderDistance) or 50.0
     if cfgDist ~= maxDist then
       maxDist = cfgDist
       maxDistSq = maxDist * maxDist
@@ -744,31 +468,31 @@ CreateThread(function()
 
     for _, panel in pairs(PANELS) do
       if panel and panel.enabled and panel.dui then
-        -- Distance-based culling
-        if vecDistSq(ppos, panel.pos) <= maxDistSq then
-          drawPanel(panel)
+        if CR3D.vecDistSq(ppos, panel.pos) <= maxDistSq then
+          CR3D.drawPanel(panel)
           drewAny = true
         end
       end
     end
 
     if drewAny then
-      waitMs = CONFIG.activeWait or 0
+      waitMs = (CR3D.CONFIG and CR3D.CONFIG.activeWait) or 0
     end
 
     Wait(waitMs)
   end
 end)
+
 -------------------------------------------------------------
 -- Focus loop (only runs at 0ms when focused)
 -------------------------------------------------------------
 CreateThread(function()
   while true do
-    if FOCUS.enabled then
+    if CR3D.FOCUS and CR3D.FOCUS.enabled then
       Wait(0)
       exports["cr-3dnui"]:FocusTick()
     else
-      Wait(CONFIG.focusIdleWait or 100)
+      Wait((CR3D.CONFIG and CR3D.CONFIG.focusIdleWait) or 100)
     end
   end
 end)
@@ -781,10 +505,12 @@ AddEventHandler("onResourceStop", function(resName)
     for _, panel in pairs(PANELS) do
       destroyDuiForPanel(panel)
     end
-    PANELS = {}
-    ATTACHMENTS = {}
-    FOCUS.enabled = false
-    FOCUS.panelId = nil
+    CR3D.PANELS = {}
+    CR3D.ATTACHMENTS = {}
+    if CR3D.FOCUS then
+      CR3D.FOCUS.enabled = false
+      CR3D.FOCUS.panelId = nil
+    end
     return
   end
 
