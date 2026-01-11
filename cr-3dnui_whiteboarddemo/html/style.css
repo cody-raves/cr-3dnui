@@ -6,6 +6,24 @@
 html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;font-family:system-ui,Segoe UI,Roboto,Arial;}
 #wrap{position:relative;width:100%;height:100%;background:transparent;}
 #c{position:absolute;left:0;top:0;width:100%;height:100%;display:block;z-index:1;}
+
+/* KEY2DUI cursor rendered inside the DUI */
+.dui-cursor{
+  position:absolute;
+  left:50%;
+  top:50%;
+  display:none;
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  border:2px solid rgba(0,255,200,0.95);
+  box-shadow:0 0 10px rgba(0,255,200,0.35);
+  transform:translate(-50%,-50%);
+  z-index:4;
+  pointer-events:none;
+  display:none;
+}
+.dui-cursor.show{display:block;}
 #ui{
   position:absolute;left:10px;top:10px;
   display:flex;gap:10px;align-items:center;flex-wrap:wrap;

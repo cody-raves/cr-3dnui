@@ -18,6 +18,10 @@ end
 -- Returns: hitPos, u, v, t
 function CR3D.raycastPanelUV(panel, maxDist)
   if not panel or not panel.enabled then return nil end
+  -- Interaction mode gate: UV raycast only applies to UV-interactable panels
+  local mode = panel.interactionMode or panel.interaction or 'uv'
+  if mode ~= 'uv' then return nil end
+
 
   local basis = CR3D.makePanelBasis(
     panel.pos, panel.normal, panel.width, panel.height,

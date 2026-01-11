@@ -86,6 +86,8 @@ local function createPanelInternal(opts, ownerOverride)
 
     alpha = opts.alpha or 255,
     enabled = (opts.enabled == nil) and true or (opts.enabled == true),
+    -- Interaction model (defaults to UV/raycast)
+    interactionMode = (opts.interactionMode or opts.interaction or 'uv'),
 
     -- Optional depth bias. If nil, makePanelBasis will pick a safe default.
     zOffset = opts.zOffset,
@@ -214,6 +216,69 @@ local function localDirToWorld(ent, localDir)
   return CR3D.vecNorm(w)
 end
 
+
+-- Convert an Euler rotation (degrees) to basis vectors (right/forward/up) in world space.
+-- GTA/FiveM rotations use: x=pitch, y=roll, z=yaw (degrees).
+local function rotToAxes(rot)
+  local x = math.rad(rot.x or 0.0)
+  local y = math.rad(rot.y or 0.0)
+  local z = math.rad(rot.z or 0.0)
+
+  local cosx, sinx = math.cos(x), math.sin(x)
+  local cosy, siny = math.cos(y), math.sin(y)
+  local cosz, sinz = math.cos(z), math.sin(z)
+
+  -- Forward vector
+  local forward = vector3(-sinz * cosx, cosz * cosx, sinx)
+  -- Right vector
+  local right = vector3(
+    cosz * cosy + sinz * sinx * siny,
+    sinz * cosy - cosz * sinx * siny,
+    -cosx * siny
+  )
+  -- Up vector
+  local up = vector3(
+    cosz * siny - sinz * sinx * cosy,
+    sinz * siny + cosz * sinx * cosy,
+    cosx * cosy
+  )
+
+  return right, forward, up
+end
+
+local function axesLocalToWorld(right, forward, up, v)
+  return CR3D.vecAdd(
+    CR3D.vecAdd(CR3D.vecMul(right, v.x), CR3D.vecMul(forward, v.y)),
+    CR3D.vecMul(up, v.z)
+  )
+end
+
+local function getBoneWorldPos(ent, boneIndex)
+  if GetWorldPositionOfEntityBone then
+    return GetWorldPositionOfEntityBone(ent, boneIndex)
+  end
+  if _GET_ENTITY_BONE_POSITION_2 then
+    return _GET_ENTITY_BONE_POSITION_2(ent, boneIndex)
+  end
+  if GetEntityBonePosition_2 then
+    return GetEntityBonePosition_2(ent, boneIndex)
+  end
+  return nil
+end
+
+local function getBoneWorldRot(ent, boneIndex)
+  if GetWorldRotationOfEntityBone then
+    return GetWorldRotationOfEntityBone(ent, boneIndex)
+  end
+  if _GET_ENTITY_BONE_ROTATION then
+    return _GET_ENTITY_BONE_ROTATION(ent, boneIndex)
+  end
+  if GetEntityBoneRotation then
+    return GetEntityBoneRotation(ent, boneIndex)
+  end
+  return vector3(0.0, 0.0, 0.0)
+end
+
 exports("AttachPanelToEntity", function(opts)
   opts = opts or {}
 
@@ -291,6 +356,55 @@ exports("AttachPanelToEntity", function(opts)
   end
 
   return panelId
+end)
+
+
+-- Attach a panel to a specific bone on an entity (vehicles, peds, props with bones).
+-- Uses the bone transform as the attachment source.
+exports("AttachPanelToBone", function(opts)
+    if type(opts) ~= "table" then return nil end
+    local ent = opts.entity
+    if not ent or ent == 0 or not DoesEntityExist(ent) then return nil end
+
+    local boneIndex = opts.boneIndex
+    local boneName = opts.boneName or opts.bone
+
+    if not boneIndex then
+        if type(boneName) == "string" and boneName ~= "" then
+            boneIndex = GetEntityBoneIndexByName(ent, boneName)
+        end
+    end
+
+    if not boneIndex or boneIndex == -1 then
+        if boneName then
+            print(('[cr-3dnui] AttachPanelToBone: bone not found (%s)'):format(tostring(boneName)))
+        else
+            print("[cr-3dnui] AttachPanelToBone: missing boneName/boneIndex")
+        end
+        return nil
+    end
+
+    local panelId = createPanelInternal(opts, GetCurrentResourceName())
+    if not panelId then return nil end
+
+    ATTACHMENTS[panelId] = {
+        entity = ent,
+        boneIndex = boneIndex,
+        boneName = boneName,
+
+        offset = opts.localOffset or vector3(0,0,0),
+        localNormal = opts.localNormal or vector3(0,1,0),
+
+        rotateNormal = (opts.rotateNormal ~= false),
+        updateInterval = opts.updateInterval,
+
+        -- Distance-based update culling (transform only)
+        maxDistSq = opts.updateMaxDistance and (opts.updateMaxDistance * opts.updateMaxDistance) or nil,
+
+        nextUpdate = 0
+    }
+
+    return panelId
 end)
 
 -------------------------------------------------------------

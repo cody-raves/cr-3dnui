@@ -2,6 +2,22 @@
   const canvas = document.getElementById('c');
   const ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
 
+  // KEY2DUI: cursor drawn inside the DUI (the game cursor can be hidden)
+  const duiCursor = document.getElementById('duiCursor');
+  function setDuiCursor(u, v, show = true) {
+    if (!duiCursor) return;
+    if (!show) {
+      duiCursor.style.display = 'none';
+      return;
+    }
+    // Clamp & position as percentages
+    const cu = Math.max(0, Math.min(1, Number(u) || 0));
+    const cv = Math.max(0, Math.min(1, Number(v) || 0));
+    duiCursor.style.left = (cu * 100).toFixed(3) + '%';
+    duiCursor.style.top = (cv * 100).toFixed(3) + '%';
+    duiCursor.style.display = 'block';
+  }
+
   const ui = document.getElementById('ui');
   const paletteEl = document.getElementById('palette');
   const sizeEl = document.getElementById('size');
@@ -266,6 +282,16 @@
   window.addEventListener('message', (ev) => {
     const d = ev.data;
     if (!d || typeof d !== 'object') return;
+
+	    // KEY2DUI cursor updates (visual only)
+	    if (d.type === 'wb_cursor') {
+	      setDuiCursor(d.u, d.v, d.show !== false);
+	      return;
+	    }
+	    if (d.type === 'wb_cursor_hide') {
+	      setDuiCursor(0.5, 0.5, false);
+	      return;
+	    }
 
     if (d.type === 'wb_text_commit') {
       drawText(d);

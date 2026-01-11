@@ -64,6 +64,64 @@ end
 
 local panelScale = 1.0
 
+
+local mouseDown = false
+
+-- Interaction mode (uv or key2dui)
+local inputMode = tostring(Config.InteractionMode or 'uv'):lower()
+if inputMode ~= 'uv' and inputMode ~= 'key2dui' then inputMode = 'uv' end
+
+-- key2dui state (locked cursor)
+local key2d = {
+  active = false,
+  panelId = nil,
+  u = 0.5,
+  v = 0.5,
+  speed = tonumber(Config.Key2DUICursorSpeed) or 0.010,
+  flipY = (Config.Key2DUIFlipY == true),
+
+  -- internal: throttle cursor visual updates to the DUI (avoid spamming)
+  _lastSendU = -1.0,
+  _lastSendV = -1.0,
+  _lastSendAt = 0,
+  _sendEveryMs = 33, -- ~30fps
+}
+
+local function clamp01(x)
+  if x < 0.0 then return 0.0 end
+  if x > 1.0 then return 1.0 end
+  return x
+end
+
+-- KEY2DUI: draw the cursor *inside* the DUI so clicks visually line up
+local function sendDuiCursor(panelId, u, v, show)
+  if not panelId then return end
+  if show == false then
+    exports['cr-3dnui']:SendMessage(panelId, { type = 'wb_cursor_hide' })
+    key2d._lastSendU = -1.0
+    key2d._lastSendV = -1.0
+    key2d._lastSendAt = GetGameTimer()
+    return
+  end
+
+  local now = GetGameTimer()
+  -- send if moved a bit OR a little time passed (keeps it smooth without spamming)
+  if (math.abs((u or 0.5) - key2d._lastSendU) > 0.002) or
+     (math.abs((v or 0.5) - key2d._lastSendV) > 0.002) or
+     (now - key2d._lastSendAt) >= key2d._sendEveryMs then
+
+    exports['cr-3dnui']:SendMessage(panelId, {
+      type = 'wb_cursor',
+      u = u,
+      v = v,
+      show = true
+    })
+
+    key2d._lastSendU = u
+    key2d._lastSendV = v
+    key2d._lastSendAt = now
+  end
+end
 -- =========================================================
 -- TEXT TOOL / KEYBOARD SUPPORT (POC)
 -- =========================================================
@@ -162,15 +220,24 @@ end
 -------------------------------------------------------------
 -- Cursor / aim indicator (uses API cursor if available)
 -------------------------------------------------------------
-local function DrawAimIndicator(isHit)
-  -- Prefer API cursor (so demos don't have to ship UI drawing code)
-  local ok = pcall(function()
-    exports["cr-3dnui"]:DrawCursor(0.5, 0.5, isHit)
-  end)
-  if ok then return end
+-- Aim indicator for the demo.
+--
+-- UV mode benefits from a tiny on-screen aim marker.
+-- KEY2DUI mode renders its own cursor *inside the DUI*, so we intentionally
+-- do NOT draw a game-space crosshair (it feels "double" and can look offset).
+local function DrawAimIndicator(isHit, drawCursor)
+  if drawCursor == nil then drawCursor = true end
 
-  -- Fallback (old crosshair) if someone runs this demo with an older API build
-  DrawCrosshairAndHitMarker(isHit)
+  if drawCursor then
+    -- Prefer API cursor (so demos don't have to ship UI drawing code)
+    local ok = pcall(function()
+      exports["cr-3dnui"]:DrawCursor(0.5, 0.5, isHit)
+    end)
+    if not ok then
+      -- Fallback (old crosshair) if someone runs this demo with an older API build
+      DrawCrosshairAndHitMarker(isHit)
+    end
+  end
 end
 
 -------------------------------------------------------------
@@ -433,7 +500,7 @@ RegisterKeyMapping("wbplace", "Place whiteboard where aiming", "keyboard", Confi
 -------------------------------------------------------------
 RegisterCommand("wbuse", function()
   interactMode = not interactMode
-  notify(interactMode and "Interact mode ON (aim + hold left click to draw)" or "Interact mode OFF")
+  notify(interactMode and ("Interact mode ON ("..inputMode..")") or "Interact mode OFF")
 
   -- If someone toggles interact off mid-text, cancel safely.
   if not interactMode and textEntry.active then
@@ -448,6 +515,33 @@ RegisterCommand("wbuse", function()
   end
 end)
 RegisterKeyMapping("wbuse", "Toggle whiteboard interaction mode", "keyboard", Config.KeyToggleInteract)
+
+
+-------------------------------------------------------------
+-- Input mode switch (uv | key2dui)
+-------------------------------------------------------------
+RegisterCommand("wbinput", function(_, args)
+  local mode = tostring(args[1] or ""):lower()
+  if mode ~= "uv" and mode ~= "key2dui" then
+    notify(("Usage: /wbinput uv | key2dui  (current: %s)"):format(inputMode))
+    return
+  end
+  if inputMode == mode then
+    notify(("Input mode already '%s'"):format(inputMode))
+    return
+  end
+  -- Exit any active key2dui session cleanly
+  if key2d.active and key2d.panelId then
+    if mouseDown then
+      exports["cr-3dnui"]:SendMouseUp(key2d.panelId, "left")
+    end
+    mouseDown = false
+    key2d.active = false
+    key2d.panelId = nil
+  end
+  inputMode = mode
+  notify(("Input mode set to '%s'"):format(inputMode))
+end, false)
 
 -------------------------------------------------------------
 -- Delete / clear helpers
@@ -536,12 +630,38 @@ CreateThread(function()
   end
 end)
 
+
 -------------------------------------------------------------
--- Interaction loop: pick nearest hit among all panels
+-- Interaction loop (UV or Key2DUI)
+--   UV: raycast -> u/v every tick (world-space interaction)
+--   Key2DUI: aim once to select a panel, then use a locked 2D cursor
 -------------------------------------------------------------
 CreateThread(function()
   local activePanel = nil
   local lastBestPanel, lastBestU, lastBestV = nil, nil, nil
+  local lastBestT = nil
+
+  local function exitKey2DUI()
+    if key2d.active and key2d.panelId then
+      if mouseDown then
+        exports["cr-3dnui"]:SendMouseUp(key2d.panelId, "left")
+      end
+    end
+    mouseDown = false
+
+    -- hide the cursor rendered inside the DUI when we leave KEY2D mode
+    if key2d.panelId then
+      sendDuiCursor(key2d.panelId, 0.5, 0.5, false)
+    end
+
+    -- reset throttle so the next entry shows immediately
+    key2d._lastSendU = -1.0
+    key2d._lastSendV = -1.0
+    key2d._lastSendAt = 0
+
+    key2d.active = false
+    key2d.panelId = nil
+  end
 
   while true do
     -- idle / reset state
@@ -551,8 +671,9 @@ CreateThread(function()
       end
       mouseDown = false
       activePanel = nil
-      lastBestPanel, lastBestU, lastBestV = nil, nil, nil
+      lastBestPanel, lastBestU, lastBestV, lastBestT = nil, nil, nil, nil
       lastHoveredPanel = nil
+      exitKey2DUI()
       Wait(PERF.idleWait)
     else
       -- keep caches fresh
@@ -560,15 +681,15 @@ CreateThread(function()
       RefreshNearbyBoards()
 
       if #nearbyBoards == 0 then
-        -- nothing near the player, don't spin
         DrawAimIndicator(false)
+        exitKey2DUI()
         Wait(0)
       else
         local bestPanel, bestU, bestV, bestT = nil, nil, nil, nil
 
-        -- Throttle raycasts when not actively drawing.
+        -- Throttle raycasts when not actively drawing / selecting.
         local now = GetGameTimer()
-        local canRaycast = mouseDown or ((now - lastRaycastAt) >= PERF.raycastThrottle)
+        local canRaycast = (inputMode == "uv" and mouseDown) or (not key2d.active) or ((now - lastRaycastAt) >= PERF.raycastThrottle)
         if canRaycast then
           lastRaycastAt = now
 
@@ -584,52 +705,147 @@ CreateThread(function()
             end
           end
 
-          lastBestPanel, lastBestU, lastBestV = bestPanel, bestU, bestV
+          lastBestPanel, lastBestU, lastBestV, lastBestT = bestPanel, bestU, bestV, bestT
         else
           -- reuse last results between raycasts
-          bestPanel, bestU, bestV = lastBestPanel, lastBestU, lastBestV
+          bestPanel, bestU, bestV, bestT = lastBestPanel, lastBestU, lastBestV, lastBestT
         end
 
-        DrawAimIndicator(bestPanel ~= nil)
+        -- =========================
+        -- MODE: UV (original)
+        -- =========================
+        if inputMode == "uv" then
+          DrawAimIndicator(bestPanel ~= nil)
 
-        if not bestPanel then
-          lastHoveredPanel = nil
-          if mouseDown and activePanel then
-            exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
-            mouseDown = false
-          end
-          activePanel = nil
-          Wait(0)
-        else
-          activePanel = bestPanel
-          lastHoveredPanel = bestPanel
-
-          -- prevent weapon fire/aim
-          DisableControlAction(0, 24, true)
-          DisableControlAction(0, 25, true)
-          DisableControlAction(0, 257, true)
-
-          -- If text entry is active, do NOT keep drawing/dragging.
-          if textEntry.active then
+          if not bestPanel then
+            lastHoveredPanel = nil
             if mouseDown and activePanel then
               exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
               mouseDown = false
             end
+            activePanel = nil
             Wait(0)
           else
-            exports["cr-3dnui"]:SendMouseMove(activePanel, bestU, bestV, { flipY = false })
+            activePanel = bestPanel
+            lastHoveredPanel = bestPanel
 
-            if IsDisabledControlJustPressed(0, 24) then
-              mouseDown = true
-              exports["cr-3dnui"]:SendMouseDown(activePanel, "left")
+            -- prevent weapon fire/aim
+            DisableControlAction(0, 24, true)
+            DisableControlAction(0, 25, true)
+            DisableControlAction(0, 257, true)
+
+            -- If text entry is active, do NOT keep drawing/dragging.
+            if textEntry.active then
+              if mouseDown and activePanel then
+                exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
+                mouseDown = false
+              end
+              Wait(0)
+            else
+              exports["cr-3dnui"]:SendMouseMove(activePanel, bestU, bestV, { flipY = false })
+
+              if IsDisabledControlJustPressed(0, 24) then
+                mouseDown = true
+                exports["cr-3dnui"]:SendMouseDown(activePanel, "left")
+              end
+
+              if mouseDown and IsDisabledControlJustReleased(0, 24) then
+                mouseDown = false
+                exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
+              end
+
+              Wait(PERF.activeWait)
             end
+          end
 
-            if mouseDown and IsDisabledControlJustReleased(0, 24) then
+        -- =========================
+        -- MODE: KEY2DUI
+        -- =========================
+        else
+          -- If we haven't selected a panel yet, show aim indicator and allow select.
+          if (not key2d.active) then
+            -- KEY2DUI uses an in-DUI cursor, so we do NOT draw a game-space cursor.
+            DrawAimIndicator(bestPanel ~= nil, false)
+            lastHoveredPanel = bestPanel
+
+            -- Auto-select the panel the moment you enter interact mode.
+            -- This removes the extra "click once to start" step.
+            if bestPanel then
+              key2d.active = true
+              key2d.panelId = bestPanel
+              key2d.u = (type(bestU) == "number") and bestU or 0.5
+              key2d.v = (type(bestV) == "number") and bestV or 0.5
+	              -- show the cursor on the panel immediately
+	              sendDuiCursor(bestPanel, key2d.u, key2d.v, true)
               mouseDown = false
-              exports["cr-3dnui"]:SendMouseUp(activePanel, "left")
+              notify("[key2dui] focused panel. Move mouse to drive cursor. ESC/BACKSPACE to exit.")
             end
 
-            Wait(PERF.activeWait)
+            -- no selection yet -> no per-frame work besides aim helper
+            Wait(0)
+
+          else
+            -- Key2DUI active: cursor drives the DUI directly (no UV updates)
+            local pid = key2d.panelId
+            if not pid then
+              exitKey2DUI()
+              Wait(0)
+            else
+              -- optional: exit keys
+              if IsControlJustPressed(0, 322) or IsControlJustPressed(0, 177) or IsDisabledControlJustPressed(0, 25) then
+                exitKey2DUI()
+                notify("[key2dui] exited.")
+                Wait(0)
+              else
+                -- prevent camera + weapon actions while "using" the screen
+                DisableControlAction(0, 1, true)   -- LookLeftRight
+                DisableControlAction(0, 2, true)   -- LookUpDown
+                DisableControlAction(0, 24, true)  -- Attack
+                DisableControlAction(0, 25, true)  -- Aim
+                DisableControlAction(0, 257, true) -- Attack2
+                DisableControlAction(0, 44, true)  -- Cover (Q)
+                DisableControlAction(0, 37, true)  -- WeaponWheel
+
+                -- Update cursor from mouse deltas (camera input axes)
+                local dx = GetDisabledControlNormal(0, 1)
+                local dy = GetDisabledControlNormal(0, 2)
+
+                -- Y axis: by default mouse down moves cursor down (UI-style). Set Config.Key2DUIFlipY=true to invert if needed
+                if key2d.flipY then
+                  key2d.u = clamp01(key2d.u + (dx * key2d.speed))
+                  key2d.v = clamp01(key2d.v - (dy * key2d.speed))
+                else
+                  key2d.u = clamp01(key2d.u + (dx * key2d.speed))
+                  key2d.v = clamp01(key2d.v + (dy * key2d.speed))
+                end
+
+                lastHoveredPanel = pid
+
+                -- If text entry is active, do NOT keep drawing/dragging.
+                if textEntry.active then
+                  if mouseDown then
+                    exports["cr-3dnui"]:SendMouseUp(pid, "left")
+                    mouseDown = false
+                  end
+                  Wait(0)
+                else
+                  exports["cr-3dnui"]:SendMouseMove(pid, key2d.u, key2d.v, { flipY = false })
+                  sendDuiCursor(pid, key2d.u, key2d.v, true)
+
+                  if IsDisabledControlJustPressed(0, 24) then
+                    mouseDown = true
+                    exports["cr-3dnui"]:SendMouseDown(pid, "left")
+                  end
+
+                  if mouseDown and IsDisabledControlJustReleased(0, 24) then
+                    mouseDown = false
+                    exports["cr-3dnui"]:SendMouseUp(pid, "left")
+                  end
+
+                  Wait(0)
+                end
+              end
+            end
           end
         end
       end
@@ -638,6 +854,7 @@ CreateThread(function()
 end)
 
 -------------------------------------------------------------
+-- TEXT ENTRY THREAD-------------------------------------------------------------
 -- TEXT ENTRY THREAD (onscreen keyboard prompt)
 -------------------------------------------------------------
 CreateThread(function()

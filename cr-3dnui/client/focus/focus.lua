@@ -42,6 +42,10 @@ function CR3D.FocusTick()
   local panel = CR3D.PANELS[tostring(CR3D.FOCUS.panelId)]
   if not panel then return false end
 
+  -- Interaction mode gate: current focus tick path supports UV (raycast + UV) only.
+  local mode = panel.interactionMode or panel.interaction or 'uv'
+  if mode ~= 'uv' then return false end
+
   local opts = CR3D.FOCUS.opts or {}
   local maxDist = opts.maxDist or 7.0
   local hitPos, u, v, t = CR3D.raycastPanelUV(panel, maxDist)

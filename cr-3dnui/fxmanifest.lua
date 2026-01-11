@@ -3,8 +3,8 @@ game 'gta5'
 lua54 'yes'
 
 author 'codyraves'
-description 'cr-3dnui - Interactive 3D DUI panels (world-space quads) with raycast + focus helpers + entity attachment helper (AttachPanelToEntity)'
-version '2.3'
+description 'cr-3dnui - Interactive 3D DUI panels (world-space quads) with raycast + focus helpers + entity attachment helper (AttachPanelToEntity) + mouse injection / forwarding'
+version '2.4'
 
 client_scripts {
   'client/config.lua',

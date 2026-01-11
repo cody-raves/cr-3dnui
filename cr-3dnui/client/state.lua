@@ -3,6 +3,10 @@
 
 CR3D = CR3D or {}
 
+-- Panel interaction modes:
+--   'uv'      = world-space raycast + UV mapping (default)
+--   'key2dui'  = (planned) focused interaction mode (no UV math)
+
 CR3D.PANELS = CR3D.PANELS or {}
 CR3D.NEXT_ID = CR3D.NEXT_ID or 1
 

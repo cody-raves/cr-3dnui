@@ -33,6 +33,17 @@ Config.KeyTogglePlace = 'F7'
 Config.KeyToggleInteract = 'G'
 
 
+
+-- Interaction mode
+-- 'uv' = raycast/UV world-space interaction (default)
+-- 'key2dui' = locked cursor (no UV updates after selecting a panel)
+Config.InteractionMode = Config.InteractionMode or 'uv'
+
+-- Key2DUI tuning
+Config.Key2DUICursorSpeed = Config.Key2DUICursorSpeed or 0.010  -- cursor speed multiplier
+Config.Key2DUIFlipY = (Config.Key2DUIFlipY == true)             -- true = invert Y (if your vertical axis feels flipped)
+
+-- When using key2dui, press ESC or BACKSPACE to exit the cursor mode.
 -- Extra vertical nudge (meters) applied along the board's UP vector after face-raycast.
 -- Use this to fine-tune if the panel is slightly too low/high.
 Config.PanelUpOffset = 0.0

@@ -4,7 +4,7 @@ lua54 'yes'
 
 author 'codyraves'
 description 'cr-3dnui_whiteboarddemo: placeable whiteboard with in-world paint UI (cr-3dnui) - face-raycast aligned'
-version '2.1'
+version '2.2'
 
 dependency 'cr-3dnui'
 
