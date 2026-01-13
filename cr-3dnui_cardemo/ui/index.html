@@ -2,35 +2,67 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>3D-NUI Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>cr-3dnui car demo</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="card">
-    <div class="title">3D‑NUI ATTACHED</div>
-    <div class="subtitle">Vehicle Roof • Working Demo</div>
+  <div id="app">
+    <div class="frame">
+      <div class="header">
+        <div class="title">3D-NUI Demo</div>
+        <div class="sub">Click tabs or use <span class="kbd">/nuipage</span></div>
+      </div>
 
-    <div class="stats">
-      <div class="stat">
-        <div class="label">Speed</div>
-        <div class="value" id="speed">0</div>
-        <div class="unit">mph</div>
+      <div class="tabs">
+        <button class="tab" data-page="all">ALL</button>
+        <button class="tab" data-page="spd">SPD</button>
+        <button class="tab" data-page="gear">GEAR</button>
+        <button class="tab" data-page="eng">ENG</button>
       </div>
-      <div class="stat">
-        <div class="label">Gear</div>
-        <div class="value" id="gear">N</div>
-        <div class="unit" id="engine">ENGINE</div>
-      </div>
-      <div class="stat">
-        <div class="label">Update</div>
-        <div class="value" id="interval">33</div>
-        <div class="unit">ms</div>
-      </div>
-    </div>
 
-    <div class="hint">
-      Commands: <span class="mono">/nuiroof </span> • <span class="mono">/nuioff</span> • <span class="mono">/nuifocus</span>
+      <div class="content">
+        <div class="card" data-view="all">
+          <div class="row">
+            <div class="label">Speed</div>
+            <div class="value" id="speedAll">0</div>
+            <div class="unit">mph</div>
+          </div>
+          <div class="row">
+            <div class="label">Gear</div>
+            <div class="value" id="gearAll">0</div>
+            <div class="unit"></div>
+          </div>
+          <div class="row">
+            <div class="label">Engine</div>
+            <div class="value" id="engAll">OFF</div>
+            <div class="unit"></div>
+          </div>
+        </div>
+
+        <div class="card" data-view="spd">
+          <div class="big">
+            <div class="bigLabel">Speed</div>
+            <div class="bigValue"><span id="speedBig">0</span><span class="bigUnit">mph</span></div>
+          </div>
+        </div>
+
+        <div class="card" data-view="gear">
+          <div class="big">
+            <div class="bigLabel">Gear</div>
+            <div class="bigValue"><span id="gearBig">0</span></div>
+          </div>
+        </div>
+
+        <div class="card" data-view="eng">
+          <div class="big">
+            <div class="bigLabel">Engine</div>
+            <div class="bigValue"><span id="engBig">OFF</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="cursor" aria-hidden="true"></div>
     </div>
   </div>
 

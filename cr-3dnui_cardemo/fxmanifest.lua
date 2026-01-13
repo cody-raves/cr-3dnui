@@ -1,13 +1,11 @@
 fx_version 'cerulean'
 game 'gta5'
 
-author 'cody-raves'
-description 'cr-3dnui vehicle attach demo'
-version '0.1.0'
+name 'cr-3dnui_cardemo'
+author 'codyraves'
+description 'cr-3dnui demo: attach panel to vehicle, dash or roof panel with interact via key2dui + debug tool for calulating normals/offsets/xyz'
+version '2.1'
 
-client_scripts {
-  'client.lua'
-}
 
 files {
   'ui/index.html',
@@ -16,3 +14,6 @@ files {
 }
 
 dependency 'cr-3dnui'
+client_scripts {
+  'client/main.lua'
+}
