@@ -25,7 +25,8 @@ function CR3D.raycastPanelUV(panel, maxDist)
 
   local basis = CR3D.makePanelBasis(
     panel.pos, panel.normal, panel.width, panel.height,
-    panel.zOffset, panel.faceCamera, panel.frontOnly, panel.depthCompensation
+    panel.zOffset, panel.faceCamera, panel.frontOnly, panel.depthCompensation,
+    panel.up
   )
 
   local center, normal, right, upWall, halfW, halfH =

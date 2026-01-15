@@ -10,7 +10,8 @@ function CR3D.drawPanel(panel)
 
   local basis = CR3D.makePanelBasis(
     panel.pos, panel.normal, panel.width, panel.height,
-    panel.zOffset, panel.faceCamera, panel.frontOnly, panel.depthCompensation
+    panel.zOffset, panel.faceCamera, panel.frontOnly, panel.depthCompensation,
+    panel.up
   )
 
   -- Optional: front-only rendering (prevents backside clipping and weird interaction)

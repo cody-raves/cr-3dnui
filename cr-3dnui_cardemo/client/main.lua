@@ -22,7 +22,8 @@ local CURRENT_ATTACH_MODE = nil -- 'roof' | 'dashprop' | 'dashstable'
 -- MODE A: Panel attached directly to the vehicle
 -- ============================================================
 local ROOF_OFFSET = vector3(0.0, 0.10, 1.70)
-local ROOF_NORMAL = vector3(-1.0, 0.0, 0.0)
+local ROOF_NORMAL = vector3(1.0, 0.0, 0.0)
+local ROOF_UP     = vector3(0.0, 0.0, 1.0)
 local ROOF_W, ROOF_H = 1.65, 0.45
 
 -- ============================================================
@@ -40,12 +41,13 @@ local DASH_PROP_MODEL = `prop_monitor_01a`
 -- If you change the vehicle OR the prop model, you MUST retune using the built-in dash tuner:
 --   /nuidashprop (jitter reference) -> /dashtune -> /dashprint
 local DASH_BONE = 'seat_dside_f'
-local DASH_PROP_OFFSET = vector3(0.4350, 0.5100, 0.1850)  -- right, forward, up
-local DASH_PROP_ROT = vector3(0.0000, -1.5000, -34.6500)       -- pitch, roll, yaw
+local DASH_PROP_OFFSET = vector3(0.4500, 0.5350, 0.1850)  -- right, forward, up
+local DASH_PROP_ROT    = vector3(2.3500, -0.5000, -34.9000)      -- pitch, roll, yaw
 
 -- Panel placement on prop_monitor_01a (from the alignment work)
 local MONITOR_LOCAL_OFFSET = vector3(0.0000, -0.0650, 0.3120)
 local MONITOR_LOCAL_NORMAL = vector3(-0.9982, 0.0000, 0.0600)
+local MONITOR_LOCAL_UP_BASE = vector3(0.0, 1.0, 0.0) -- panel 'top' direction in prop-local space
 
 -- Extra local rotation for the panel (relative to the prop), in degrees.
 local PANEL_LOCAL_ROT = vector3(0.0000, 0.0000, 0.0000)
@@ -55,8 +57,9 @@ local MONITOR_W, MONITOR_H = 0.43, 0.31
 -- Pre-baked STABLE values (vehicle-local) for Elegy2 + prop_monitor_01a using the tuned settings above.
 -- These are only used as a fallback when the prop entity isn't available to bake from.
 -- In normal use (/nuidash), we spawn+attach the prop first and bake from the actual prop transform.
-local DASH_BAKED_OFFSET_DEFAULT = vector3(-0.0405, 0.2390, 0.6806)
-local DASH_BAKED_NORMAL_DEFAULT = vector3(-0.8203, -0.5688, 0.0600)
+local DASH_BAKED_OFFSET_DEFAULT = vector3(-0.0286, 0.2505, 0.6777)
+local DASH_BAKED_NORMAL_DEFAULT = vector3(-0.8197, -0.5725, 0.0190)
+local DASH_BAKED_UP_DEFAULT     = vector3(-0.0206, -0.0037, -0.9998)
 
 -- ============================================================
 -- Shared
@@ -134,46 +137,129 @@ local function vNormalize(v)
   return vector3(v.x/mag, v.y/mag, v.z/mag)
 end
 
+local function vNeg(v)
+  return vector3(-v.x, -v.y, -v.z)
+end
+
+
+-- Build a stable "up" vector that is guaranteed to be perpendicular to the given normal.
+-- This prevents 90°/sideways rotations when the supplied up has any component along the normal.
+local function vDot(a, b)
+  return a.x*b.x + a.y*b.y + a.z*b.z
+end
+
+local function vCross(a, b)
+  return vector3(
+    a.y * b.z - a.z * b.y,
+    a.z * b.x - a.x * b.z,
+    a.x * b.y - a.y * b.x
+  )
+end
+
+local function vScale(v, s)
+  return vector3(v.x*s, v.y*s, v.z*s)
+end
+
+local function vSub(a, b)
+  return vector3(a.x-b.x, a.y-b.y, a.z-b.z)
+end
+
+local function makeOrthoUp(normal, preferredUp)
+  normal = vNormalize(normal)
+  preferredUp = vNormalize(preferredUp)
+
+  -- project preferredUp onto plane orthogonal to normal
+  local proj = vSub(preferredUp, vScale(normal, vDot(normal, preferredUp)))
+  local len = math.sqrt(proj.x*proj.x + proj.y*proj.y + proj.z*proj.z)
+
+  if len < 0.0001 then
+    -- fallback axis that isn't parallel to normal
+    local fallback = (math.abs(normal.z) < 0.99) and vector3(0.0, 0.0, 1.0) or vector3(0.0, 1.0, 0.0)
+    proj = vSub(fallback, vScale(normal, vDot(normal, fallback)))
+  end
+
+  return vNormalize(proj)
+end
+
+
 local function getPanelLocalNormal()
   return vNormalize(rotVecZYX(MONITOR_NORMAL_BASE, PANEL_LOCAL_ROT))
 end
 
 
+local function getPanelLocalUp()
+  -- Preferred "up" in prop-local space (after PANEL_LOCAL_ROT), then orthogonalize
+  -- against the panel normal so the UI doesn't end up sideways.
+  local preferredUp = vNormalize(rotVecZYX(MONITOR_LOCAL_UP_BASE, PANEL_LOCAL_ROT))
+  local n = getPanelLocalNormal()
+
+  local up = makeOrthoUp(n, preferredUp)
+
+  -- If the UI is rotated 90° in-plane (top points right), rotate Up 90° around the normal.
+  -- This is equivalent to swapping "up" with the panel's "right" axis.
+  -- If you ever need the opposite direction, change this to vNeg(vCross(n, up)).
+  up = vNormalize(vCross(n, up))
+
+  return up
+end
+
+
+
 local function computeDashStableTransform()
-  -- NEW: bake from the ACTUAL prop entity transform (bone space -> vehicle space),
+  -- Bake from the ACTUAL prop entity transform (bone space -> vehicle space),
   -- so /nuidash matches /nuidashprop 1:1 even though the prop is bone-attached.
-  -- If the prop doesn't exist yet, fall back to the old math-based bake.
+  -- Returns: vehicleLocalOffset, vehicleLocalNormal, vehicleLocalUp
   if ATTACHED_VEH and ATTACHED_PROP and DoesEntityExist(ATTACHED_VEH) and DoesEntityExist(ATTACHED_PROP) then
     -- Panel position: prop-local -> world -> vehicle-local
-    local wx, wy, wz = table.unpack(GetOffsetFromEntityInWorldCoords(ATTACHED_PROP, MONITOR_LOCAL_OFFSET.x, MONITOR_LOCAL_OFFSET.y, MONITOR_LOCAL_OFFSET.z))
+    local wx, wy, wz = table.unpack(GetOffsetFromEntityInWorldCoords(
+      ATTACHED_PROP,
+      MONITOR_LOCAL_OFFSET.x, MONITOR_LOCAL_OFFSET.y, MONITOR_LOCAL_OFFSET.z
+    ))
     local localOffset = GetOffsetFromEntityGivenWorldCoords(ATTACHED_VEH, wx, wy, wz)
 
-    -- Panel normal: prop-local direction -> world direction -> vehicle-local direction
-    local pr, pf, pu, pp = GetEntityMatrix(ATTACHED_PROP) -- right, forward, up, pos (each is vector3)
-    local worldDir = vector3(
-      pr.x * MONITOR_LOCAL_NORMAL.x + pf.x * MONITOR_LOCAL_NORMAL.y + pu.x * MONITOR_LOCAL_NORMAL.z,
-      pr.y * MONITOR_LOCAL_NORMAL.x + pf.y * MONITOR_LOCAL_NORMAL.y + pu.y * MONITOR_LOCAL_NORMAL.z,
-      pr.z * MONITOR_LOCAL_NORMAL.x + pf.z * MONITOR_LOCAL_NORMAL.y + pu.z * MONITOR_LOCAL_NORMAL.z
+    -- Panel axes in PROP local space (includes PANEL_LOCAL_ROT from the tuner)
+    local propLocalNormal = getPanelLocalNormal()
+    local propLocalUp     = getPanelLocalUp()
+
+    -- Convert prop-local directions -> world directions
+    local pr, pf, pu, _pp = GetEntityMatrix(ATTACHED_PROP) -- right, forward, up, pos (each is vector3)
+
+    local worldNormal = vector3(
+      pr.x * propLocalNormal.x + pf.x * propLocalNormal.y + pu.x * propLocalNormal.z,
+      pr.y * propLocalNormal.x + pf.y * propLocalNormal.y + pu.y * propLocalNormal.z,
+      pr.z * propLocalNormal.x + pf.z * propLocalNormal.y + pu.z * propLocalNormal.z
     )
 
-    local vr, vf, vu, vp = GetEntityMatrix(ATTACHED_VEH)
+    local worldUp = vector3(
+      pr.x * propLocalUp.x + pf.x * propLocalUp.y + pu.x * propLocalUp.z,
+      pr.y * propLocalUp.x + pf.y * propLocalUp.y + pu.y * propLocalUp.z,
+      pr.z * propLocalUp.x + pf.z * propLocalUp.y + pu.z * propLocalUp.z
+    )
+
+    -- Convert world directions -> VEHICLE local directions
+    local vr, vf, vu, _vp = GetEntityMatrix(ATTACHED_VEH)
+
     local localNormal = vector3(
-      (worldDir.x * vr.x + worldDir.y * vr.y + worldDir.z * vr.z),
-      (worldDir.x * vf.x + worldDir.y * vf.y + worldDir.z * vf.z),
-      (worldDir.x * vu.x + worldDir.y * vu.y + worldDir.z * vu.z)
+      (worldNormal.x * vr.x + worldNormal.y * vr.y + worldNormal.z * vr.z),
+      (worldNormal.x * vf.x + worldNormal.y * vf.y + worldNormal.z * vf.z),
+      (worldNormal.x * vu.x + worldNormal.y * vu.y + worldNormal.z * vu.z)
     )
+    localNormal = vNormalize(localNormal)
 
-    local len = math.sqrt(localNormal.x*localNormal.x + localNormal.y*localNormal.y + localNormal.z*localNormal.z)
-    if len > 0.00001 then
-      localNormal = vector3(localNormal.x/len, localNormal.y/len, localNormal.z/len)
-    end
+    local localUp = vector3(
+      (worldUp.x * vr.x + worldUp.y * vr.y + worldUp.z * vr.z),
+      (worldUp.x * vf.x + worldUp.y * vf.y + worldUp.z * vf.z),
+      (worldUp.x * vu.x + worldUp.y * vu.y + worldUp.z * vu.z)
+    )
+    localUp = vNormalize(localUp)
+    localUp = makeOrthoUp(localNormal, localUp)
 
-    return localOffset, localNormal
+    return localOffset, localNormal, localUp
   end
 
   -- FALLBACK: use the pre-baked defaults (vehicle-local) for this demo setup.
   -- If you change vehicle or prop, retune and rely on the prop-bake path above.
-  return DASH_BAKED_OFFSET_DEFAULT, vNormalize(DASH_BAKED_NORMAL_DEFAULT)
+  return DASH_BAKED_OFFSET_DEFAULT, vNormalize(DASH_BAKED_NORMAL_DEFAULT), vNormalize(DASH_BAKED_UP_DEFAULT)
 end
 
 
@@ -278,9 +364,14 @@ local function attachPanelToVehicle(veh)
 
     localOffset = ROOF_OFFSET,
     localNormal = ROOF_NORMAL,
+    localUp     = vector3(-(ROOF_UP).x, -(ROOF_UP).y, -(ROOF_UP).z),
 
     rotateNormal = true,
 
+    faceCamera = false,
+
+    frontOnly  = false,
+    zOffset    = 0.01,
     updateInterval = UPDATE_INTERVAL_MS,
     updateMaxDistance = UPDATE_MAX_DISTANCE,
   })
@@ -356,6 +447,9 @@ local function attachPanelToDashProp(veh)
 
   local url = getUiUrl()
 
+  local n = vNeg(getPanelLocalNormal())
+  local u = makeOrthoUp(n, getPanelLocalUp())
+
   PANEL_ID = exports['cr-3dnui']:AttachPanelToEntity({
     entity = ATTACHED_PROP,
     url = url,
@@ -369,19 +463,21 @@ local function attachPanelToDashProp(veh)
     enabled = true,
 
     localOffset = MONITOR_LOCAL_OFFSET,
-    localNormal = getPanelLocalNormal(),
+    localNormal = n,
+    localUp     = u,
 
     rotateNormal = true,
     faceCamera = false,
 
     -- Helpers from the library update:
     depthCompensation = 'screen',
-    frontOnly = true,
+    zOffset    = -0.01,
+    frontOnly = false,
     frontDotMin = 0.0,
-
     updateInterval = UPDATE_INTERVAL_MS,
     updateMaxDistance = UPDATE_MAX_DISTANCE,
   })
+
 
   if not PANEL_ID then
     notify('AttachPanelToEntity() failed on prop (ensure cr-3dnui is started + updated).')
@@ -419,7 +515,14 @@ local function attachPanelToDashStable(veh)
   end
 
   local url = getUiUrl()
-  local bakedOffset, bakedNormal = computeDashStableTransform()
+  local bakedOffset, bakedNormal, bakedUp = computeDashStableTransform()
+
+  -- Convert the /nuidashprop (prop-attached) pose into a VEHICLE-local pose,
+  -- then push the panel slightly out along its facing normal so it doesn't sit inside the prop mesh.
+  local n = vNeg(bakedNormal)
+  local u = makeOrthoUp(n, bakedUp)
+  local SURFACE_EPSILON = -0.0054
+  local bakedOffsetOut = bakedOffset + vScale(n, SURFACE_EPSILON)
 
   PANEL_ID = exports['cr-3dnui']:AttachPanelToEntity({
     entity = veh,
@@ -434,15 +537,20 @@ local function attachPanelToDashStable(veh)
     enabled = true,
 
     -- IMPORTANT: attach like roof (vehicle-root), but positioned to line up with the prop
-    localOffset = bakedOffset,
-    localNormal = bakedNormal,
+    localOffset = bakedOffsetOut,
+    localNormal = n,
+    localUp     = u,
 
     rotateNormal = true,
     faceCamera = false,
 
-    maxDistance = UPDATE_MAX_DISTANCE,
+    frontOnly  = false,
+    zOffset    = 0.0,
+
+    updateMaxDistance = UPDATE_MAX_DISTANCE,
     updateInterval = UPDATE_INTERVAL_MS
   })
+
 
   if not PANEL_ID then
     notify('AttachPanelToEntity() failed (dash stable mode).')
@@ -463,6 +571,7 @@ local function attachPanelToDashStable(veh)
   notify(('Mounted STABLE dash panel %s to vehicle %s (roof-style, no jitter)'):format(tostring(PANEL_ID), tostring(veh)))
   return true
 end
+
 
 
 -- ============================================================
@@ -673,7 +782,7 @@ RegisterCommand('dashprint', function()
   -- NOTE: These are LIVE values (what the tuner is using right now).
   -- They are demo-specific and will differ per vehicle + per prop.
   local livePanelNormal = getPanelLocalNormal()
-  local bakedOffset, bakedNormal = computeDashStableTransform()
+  local bakedOffset, bakedNormal, bakedUp = computeDashStableTransform()
 
   print('================ DASH TUNE VALUES ================')
   print(('DASH_PROP_OFFSET         = vector3(%s, %s, %s)'):format(fmt4(DASH_PROP_OFFSET.x), fmt4(DASH_PROP_OFFSET.y), fmt4(DASH_PROP_OFFSET.z)))
@@ -686,6 +795,7 @@ RegisterCommand('dashprint', function()
   print('---------------- STABLE /nuidash (baked to VEH) ----------------')
   print(('DASH_BAKED_OFFSET        = vector3(%s, %s, %s)'):format(fmt4(bakedOffset.x), fmt4(bakedOffset.y), fmt4(bakedOffset.z)))
   print(('DASH_BAKED_NORMAL        = vector3(%s, %s, %s)'):format(fmt4(bakedNormal.x), fmt4(bakedNormal.y), fmt4(bakedNormal.z)))
+  print(('DASH_BAKED_UP            = vector3(%s, %s, %s)'):format(fmt4(bakedUp.x), fmt4(bakedUp.y), fmt4(bakedUp.z)))
   print('==============================================================')
   notify('Printed LIVE dash tune values (including panel normal + baked stable values) to F8 console.')
 end, false)

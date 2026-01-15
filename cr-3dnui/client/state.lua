@@ -8,6 +8,9 @@ CR3D = CR3D or {}
 --   'key2dui'  = (planned) focused interaction mode (no UV math)
 
 CR3D.PANELS = CR3D.PANELS or {}
+
+-- Panels may optionally include `up` (second orientation axis) for true roll support.
+
 CR3D.NEXT_ID = CR3D.NEXT_ID or 1
 
 -- Entity attachments driver: [tostring(panelId)] = attachmentData

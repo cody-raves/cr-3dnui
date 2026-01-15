@@ -80,6 +80,8 @@ local function createPanelInternal(opts, ownerOverride)
 
     pos = opts.pos or vector3(0.0, 0.0, 0.0),
     normal = opts.normal or vector3(0.0, 0.0, 1.0),
+    -- Optional: 'up' axis for full roll support (if nil, renderer falls back to world-up)
+    up = opts.up or opts.localUp,
 
     width = opts.width or 1.0,
     height = opts.height or 1.0,
@@ -134,11 +136,12 @@ exports("DestroyPanel", function(panelId)
   destroyPanelInternal(panelId)
 end)
 
-exports("SetPanelTransform", function(panelId, pos, normal)
+exports("SetPanelTransform", function(panelId, pos, normal, up)
   local panel = PANELS[tostring(panelId)]
   if not panel then return end
   if pos then panel.pos = pos end
   if normal then panel.normal = normal end
+  if up then panel.up = up end
 end)
 
 exports("SetPanelSize", function(panelId, width, height)
@@ -294,10 +297,15 @@ exports("AttachPanelToEntity", function(opts)
   else
     local offset = asVec3(opts.offset or opts.localOffset, vector3(0.0, 0.0, 0.0))
     local localNormal = asVec3(opts.localNormal, asVec3(opts.normal, vector3(0.0, 0.0, 1.0)))
+    local localUp = asVec3(opts.localUp, asVec3(opts.up, nil))
     local rotateNormal = (opts.rotateNormal == nil) and true or (opts.rotateNormal == true)
 
     local posWorld = GetOffsetFromEntityInWorldCoords(ent, offset.x, offset.y, offset.z)
     local normalWorld = rotateNormal and localDirToWorld(ent, localNormal) or CR3D.vecNorm(localNormal)
+    local upWorld = nil
+    if localUp then
+      upWorld = rotateNormal and localDirToWorld(ent, localUp) or CR3D.vecNorm(localUp)
+    end
 
     panelId = createPanelInternal({
       id = opts.id,
@@ -306,6 +314,7 @@ exports("AttachPanelToEntity", function(opts)
       resH = opts.resH,
       pos = posWorld,
       normal = normalWorld,
+      up = upWorld,
       width = opts.width,
       height = opts.height,
       alpha = opts.alpha,
@@ -323,6 +332,7 @@ exports("AttachPanelToEntity", function(opts)
 
   local offset = asVec3(opts.offset or opts.localOffset, vector3(0.0, 0.0, 0.0))
   local localNormal = asVec3(opts.localNormal, asVec3(opts.normal, vector3(0.0, 0.0, 1.0)))
+  local localUp = asVec3(opts.localUp, asVec3(opts.up, nil))
   local rotateNormal = (opts.rotateNormal == nil) and true or (opts.rotateNormal == true)
 
   local interval = tonumber(opts.updateInterval or opts.interval or 16) or 16
@@ -335,6 +345,7 @@ exports("AttachPanelToEntity", function(opts)
     entity = ent,
     offset = offset,
     localNormal = localNormal,
+    localUp = localUp,
     rotateNormal = rotateNormal,
     updateInterval = interval,
     nextUpdate = 0,
@@ -353,6 +364,9 @@ exports("AttachPanelToEntity", function(opts)
 
     panel.pos = GetOffsetFromEntityInWorldCoords(ent, offset.x, offset.y, offset.z)
     panel.normal = rotateNormal and localDirToWorld(ent, localNormal) or CR3D.vecNorm(localNormal)
+    if localUp then
+      panel.up = rotateNormal and localDirToWorld(ent, localUp) or CR3D.vecNorm(localUp)
+    end
   end
 
   return panelId
@@ -394,6 +408,7 @@ exports("AttachPanelToBone", function(opts)
 
         offset = opts.localOffset or vector3(0,0,0),
         localNormal = opts.localNormal or vector3(0,1,0),
+        localUp = opts.localUp or opts.up,
 
         rotateNormal = (opts.rotateNormal ~= false),
         updateInterval = opts.updateInterval,
@@ -541,6 +556,9 @@ CreateThread(function()
               if doUpdate then
                 panel.pos = GetOffsetFromEntityInWorldCoords(a.entity, a.offset.x, a.offset.y, a.offset.z)
                 panel.normal = a.rotateNormal and localDirToWorld(a.entity, a.localNormal) or CR3D.vecNorm(a.localNormal)
+                if a.localUp then
+                  panel.up = a.rotateNormal and localDirToWorld(a.entity, a.localUp) or CR3D.vecNorm(a.localUp)
+                end
               end
 
               local step = a.updateInterval or 16
