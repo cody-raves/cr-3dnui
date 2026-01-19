@@ -638,6 +638,7 @@ AddEventHandler("onResourceStop", function(resName)
       destroyDuiForPanel(panel)
     end
     CR3D.PANELS = {}
+    if CR3D.REPLACES then CR3D.REPLACES = {} end
     CR3D.ATTACHMENTS = {}
     if CR3D.FOCUS then
       CR3D.FOCUS.enabled = false
@@ -657,4 +658,45 @@ AddEventHandler("onResourceStop", function(resName)
   for _, id in ipairs(toDestroy) do
     destroyPanelInternal(id)
   end
+
+  if CR3D.destroyReplacesByOwnerInternal then
+    CR3D.destroyReplacesByOwnerInternal(resName)
+  end
+end)
+
+
+-------------------------------------------------------------
+-- EXPORTS (client): ReplaceTexture (DUI -> material texture)
+-------------------------------------------------------------
+
+exports('CreateReplaceTexture', function(opts)
+  return CR3D.createReplaceTextureInternal(opts or {}, GetInvokingResource() or 'unknown')
+end)
+
+exports('DestroyReplaceTexture', function(replaceId)
+  return CR3D.destroyReplaceTextureInternal(replaceId)
+end)
+
+exports('SetReplaceTextureUrl', function(replaceId, url, resW, resH)
+  return CR3D.setReplaceTextureUrlInternal(replaceId, url, resW, resH)
+end)
+
+exports('SendReplaceMessage', function(replaceId, messageTable)
+  return CR3D.sendReplaceMessageInternal(replaceId, messageTable)
+end)
+
+exports('SendReplaceMouseMove', function(replaceId, u, v, opts)
+  return CR3D.sendReplaceMouseMoveInternal(replaceId, u, v, opts)
+end)
+
+exports('SendReplaceMouseDown', function(replaceId, button)
+  return CR3D.sendReplaceMouseDownInternal(replaceId, button)
+end)
+
+exports('SendReplaceMouseUp', function(replaceId, button)
+  return CR3D.sendReplaceMouseUpInternal(replaceId, button)
+end)
+
+exports('SendReplaceMouseWheel', function(replaceId, delta)
+  return CR3D.sendReplaceMouseWheelInternal(replaceId, delta)
 end)
