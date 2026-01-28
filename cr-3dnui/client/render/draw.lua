@@ -14,6 +14,12 @@ function CR3D.drawPanel(panel)
     panel.up
   )
 
+  -- Stable in-plane orientation (optional)
+  if panel.inPlaneFlip then
+    basis.right = CR3D.vecMul(basis.right, -1.0)
+    basis.up    = CR3D.vecMul(basis.up,    -1.0)
+  end
+
   -- Optional: front-only rendering (prevents backside clipping and weird interaction)
   if panel.frontOnly then
     local camPos = GetGameplayCamCoord()

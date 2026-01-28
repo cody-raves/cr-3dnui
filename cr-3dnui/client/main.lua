@@ -83,6 +83,9 @@ local function createPanelInternal(opts, ownerOverride)
     -- Optional: 'up' axis for full roll support (if nil, renderer falls back to world-up)
     up = opts.up or opts.localUp,
 
+
+    -- Optional: stable 180° in-plane rotation to correct mirroring/upside-down without camera-based flipping
+    inPlaneFlip = (opts.inPlaneFlip == true) or (opts.flip == true),
     width = opts.width or 1.0,
     height = opts.height or 1.0,
 

@@ -54,7 +54,8 @@ function CR3D.makePanelBasis(pos, normal, width, height, zOffset, faceCamera, fr
   -- Prefer to align panel "right" with the camera's right vector projected onto the plane.
   -- This yields a consistent screen orientation for demos (snake/whiteboard) without requiring panelUp.
   -- ============================================================
-  do
+  if not panelUp then
+    do
     local camRot = GetGameplayCamRot(2)
     local camF = CR3D.rotationToDirection(camRot)
     local camR = CR3D.vecNorm(CR3D.vecCross(camF, vector3(0.0, 0.0, 1.0)))
@@ -71,6 +72,7 @@ function CR3D.makePanelBasis(pos, normal, width, height, zOffset, faceCamera, fr
         right  = CR3D.vecMul(right,  -1.0)
         upWall = CR3D.vecMul(upWall, -1.0)
       end
+    end
     end
   end
 
