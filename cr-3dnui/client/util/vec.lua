@@ -38,3 +38,11 @@ function CR3D.rotationToDirection(rot)
   local sinZ = math.sin(radZ)
   return vector3(-sinZ * cosX, cosZ * cosX, sinX)
 end
+-- Flatten a vector onto the XY plane (zero Z). Useful when you want purely horizontal math
+-- (e.g., choosing left/right offsets) without inheriting any vertical component.
+function CR3D.flat2D(v)
+  return vector3(v.x, v.y, 0.0)
+end
+
+-- Backwards-compat global helper (used by some dependent resources)
+_flat2D = CR3D.flat2D
