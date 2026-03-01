@@ -637,17 +637,28 @@ end)
 -------------------------------------------------------------
 AddEventHandler("onResourceStop", function(resName)
   if resName == GetCurrentResourceName() then
+    -- Clean up entity textures first (they reference panels)
+    if CR3D.destroyAllEntityTextures then
+      CR3D.destroyAllEntityTextures()
+    end
+
     for _, panel in pairs(PANELS) do
       destroyDuiForPanel(panel)
     end
     CR3D.PANELS = {}
     if CR3D.REPLACES then CR3D.REPLACES = {} end
+    if CR3D.ENTITY_TEXTURES then CR3D.ENTITY_TEXTURES = {} end
     CR3D.ATTACHMENTS = {}
     if CR3D.FOCUS then
       CR3D.FOCUS.enabled = false
       CR3D.FOCUS.panelId = nil
     end
     return
+  end
+
+  -- Clean up entity textures owned by the stopping resource
+  if CR3D.destroyEntityTexturesByOwner then
+    CR3D.destroyEntityTexturesByOwner(resName)
   end
 
   -- Collect first (avoid skipping entries while mutating PANELS during pairs)
@@ -702,4 +713,78 @@ end)
 
 exports('SendReplaceMouseWheel', function(replaceId, delta)
   return CR3D.sendReplaceMouseWheelInternal(replaceId, delta)
+end)
+
+-------------------------------------------------------------
+-- EXPORTS (client): EntityTexture (per-entity DUI overlays)
+-------------------------------------------------------------
+
+exports('CreateEntityTexture', function(opts)
+  return CR3D.createEntityTextureInternal(opts or {}, GetInvokingResource() or 'unknown')
+end)
+
+exports('DestroyEntityTexture', function(etId)
+  return CR3D.destroyEntityTextureInternal(etId)
+end)
+
+exports('SetEntityTextureUrl', function(etId, url, resW, resH)
+  return CR3D.setEntityTextureUrlInternal(etId, url, resW, resH)
+end)
+
+exports('GetEntityTextureInfo', function(etId)
+  return CR3D.getEntityTextureInfoInternal(etId)
+end)
+
+exports('SendEntityTextureMessage', function(etId, messageTable)
+  return CR3D.sendEntityTextureMessageInternal(etId, messageTable)
+end)
+
+exports('SendEntityTextureMouseMove', function(etId, u, v, opts)
+  return CR3D.sendEntityTextureMouseMoveInternal(etId, u, v, opts)
+end)
+
+exports('SendEntityTextureMouseDown', function(etId, button)
+  return CR3D.sendEntityTextureMouseDownInternal(etId, button)
+end)
+
+exports('SendEntityTextureMouseUp', function(etId, button)
+  return CR3D.sendEntityTextureMouseUpInternal(etId, button)
+end)
+
+exports('SendEntityTextureMouseWheel', function(etId, delta)
+  return CR3D.sendEntityTextureMouseWheelInternal(etId, delta)
+end)
+
+exports('RaycastEntityTexture', function(etId, maxDist)
+  return CR3D.raycastEntityTextureInternal(etId, maxDist)
+end)
+
+exports('RaycastEntityTextures', function(maxDist)
+  local bestId, bestHit, bestU, bestV, bestT = nil, nil, nil, nil, nil
+  for id, entry in pairs(CR3D.ENTITY_TEXTURES) do
+    local hitPos, u, v, t = CR3D.raycastEntityTextureInternal(id, maxDist)
+    if hitPos then
+      if not bestT or t < bestT then
+        bestId, bestHit, bestU, bestV, bestT = tonumber(id) or id, hitPos, u, v, t
+      end
+    end
+  end
+  if not bestId then return nil end
+  return bestId, bestHit, bestU, bestV, bestT
+end)
+
+exports('DestroyEntityTexturesByEntity', function(ent)
+  return CR3D.destroyEntityTexturesByEntity(ent)
+end)
+
+exports('RegisterModelPreset', function(modelName, preset)
+  if type(modelName) ~= "string" or modelName == "" then return false end
+  if type(preset) ~= "table" then return false end
+  local nameKey = string.lower(modelName)
+  CR3D.MODEL_PRESETS[nameKey] = preset
+  local ok, hash = pcall(function() return GetHashKey(modelName) end)
+  if ok and hash then
+    CR3D.MODEL_PRESETS[hash] = preset
+  end
+  return true
 end)
