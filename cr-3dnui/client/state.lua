@@ -1,4 +1,4 @@
--- cr-3dnui/client/state.lua
+﻿-- cr-3dnui/client/state.lua
 -- Shared runtime state for the library
 
 CR3D = CR3D or {}
@@ -25,6 +25,10 @@ CR3D.FOCUS = CR3D.FOCUS or {
   keymap = {},
   lastHit = false,
   missSince = 0,
+  hasHit = false,
+  u = nil,
+  v = nil,
+  hitPos = nil,
 }
 
 -- Built-in HUD cursor (optional helper)

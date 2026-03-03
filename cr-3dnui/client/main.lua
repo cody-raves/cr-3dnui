@@ -1,4 +1,4 @@
--- cr-3dnui (library) - client/main.lua
+﻿-- cr-3dnui (library) - client/main.lua
 -- Renders DUI-backed HTML pages on arbitrary world-space quads,
 -- raycast -> UV helpers, optional native mouse injection,
 -- focus + keyboard capture helpers, and entity attachment helper.
@@ -7,6 +7,40 @@ CR3D = CR3D or {}
 
 local PANELS = CR3D.PANELS
 local ATTACHMENTS = CR3D.ATTACHMENTS
+local RENDER_CANDIDATES = {}
+
+local function invalidatePanelCache(panel)
+  if not panel then return end
+  panel._geomDirty = true
+  panel._basisCache = nil
+end
+
+local function getFrameCamData()
+  -- Use the actively rendered camera for interaction rays.
+  -- During scripted focus cams, GetGameplayCam* can point to the wrong camera.
+  local renderingCam = (GetRenderingCam and GetRenderingCam()) or 0
+  local usingScriptedCam = (renderingCam ~= nil and renderingCam ~= 0)
+  local camPos = usingScriptedCam and ((GetFinalRenderedCamCoord and GetFinalRenderedCamCoord()) or GetGameplayCamCoord()) or GetGameplayCamCoord()
+  local camRot = usingScriptedCam and ((GetFinalRenderedCamRot and GetFinalRenderedCamRot(2)) or GetGameplayCamRot(2)) or GetGameplayCamRot(2)
+  local camForward = CR3D.rotationToDirection(camRot)
+  local camRight = CR3D.vecNorm(CR3D.vecCross(camForward, vector3(0.0, 0.0, 1.0)))
+  local cam = {
+    pos = camPos,
+    rot = camRot,
+    forward = camForward,
+    right = camRight,
+    frame = GetFrameCount()
+  }
+  CR3D._FRAME_CAM = cam
+  return cam
+end
+
+function CR3D.getFrameCamData()
+  local cached = CR3D._FRAME_CAM
+  local frame = GetFrameCount()
+  if cached and cached.frame == frame then return cached end
+  return getFrameCamData()
+end
 
 -------------------------------------------------------------
 -- Draw HUD cursor export
@@ -84,7 +118,7 @@ local function createPanelInternal(opts, ownerOverride)
     up = opts.up or opts.localUp,
 
 
-    -- Optional: stable 180° in-plane rotation to correct mirroring/upside-down without camera-based flipping
+    -- Optional: stable 180Â° in-plane rotation to correct mirroring/upside-down without camera-based flipping
     inPlaneFlip = (opts.inPlaneFlip == true) or (opts.flip == true),
     width = opts.width or 1.0,
     height = opts.height or 1.0,
@@ -145,6 +179,7 @@ exports("SetPanelTransform", function(panelId, pos, normal, up)
   if pos then panel.pos = pos end
   if normal then panel.normal = normal end
   if up then panel.up = up end
+  if pos or normal or up then invalidatePanelCache(panel) end
 end)
 
 exports("SetPanelSize", function(panelId, width, height)
@@ -152,6 +187,7 @@ exports("SetPanelSize", function(panelId, width, height)
   if not panel then return end
   if width then panel.width = width end
   if height then panel.height = height end
+  if width or height then invalidatePanelCache(panel) end
 end)
 
 exports("SetPanelUrl", function(panelId, url, resW, resH)
@@ -176,6 +212,15 @@ exports("SetPanelEnabled", function(panelId, enabled)
   panel.enabled = (enabled == true)
 end)
 
+exports("SetPanelInteractionMode", function(panelId, mode)
+  local panel = PANELS[tostring(panelId)]
+  if not panel then return false end
+  local m = tostring(mode or "uv")
+  if m ~= "uv" and m ~= "native_mouse" and m ~= "key2dui" then m = "uv" end
+  panel.interactionMode = m
+  return true
+end)
+
 -- NEW: Helpers
 exports("SetPanelFacing", function(panelId, frontOnly, frontDotMin)
   local panel = PANELS[tostring(panelId)]
@@ -184,6 +229,7 @@ exports("SetPanelFacing", function(panelId, frontOnly, frontDotMin)
   if frontDotMin ~= nil then
     panel.frontDotMin = tonumber(frontDotMin) or (panel.frontDotMin or 0.0)
   end
+  invalidatePanelCache(panel)
   return true
 end)
 
@@ -191,6 +237,7 @@ exports("SetPanelDepthCompensation", function(panelId, mode)
   local panel = PANELS[tostring(panelId)]
   if not panel then return false end
   panel.depthCompensation = mode -- nil | "screen"
+  invalidatePanelCache(panel)
   return true
 end)
 
@@ -198,6 +245,7 @@ exports("SetPanelZOffset", function(panelId, zOffset)
   local panel = PANELS[tostring(panelId)]
   if not panel then return false end
   panel.zOffset = zOffset -- can be nil to use defaults from depthCompensation
+  invalidatePanelCache(panel)
   return true
 end)
 
@@ -370,6 +418,7 @@ exports("AttachPanelToEntity", function(opts)
     if localUp then
       panel.up = rotateNormal and localDirToWorld(ent, localUp) or CR3D.vecNorm(localUp)
     end
+    invalidatePanelCache(panel)
   end
 
   return panelId
@@ -431,13 +480,14 @@ end)
 exports("RaycastPanel", function(panelId, maxDist)
   local panel = PANELS[tostring(panelId)]
   if not panel then return nil end
-  return CR3D.raycastPanelUV(panel, maxDist)
+  return CR3D.raycastPanelUV(panel, maxDist, CR3D.getFrameCamData())
 end)
 
 exports("RaycastPanels", function(maxDist)
   local bestId, bestHit, bestU, bestV, bestT = nil, nil, nil, nil, nil
+  local frameCam = CR3D.getFrameCamData()
   for id, panel in pairs(PANELS) do
-    local hitPos, u, v, t = CR3D.raycastPanelUV(panel, maxDist)
+    local hitPos, u, v, t = CR3D.raycastPanelUV(panel, maxDist, frameCam)
     if hitPos then
       if not bestT or t < bestT then
         bestId, bestHit, bestU, bestV, bestT = tonumber(id) or id, hitPos, u, v, t
@@ -519,6 +569,11 @@ exports("IsFocused", function()
   return CR3D.IsFocused()
 end)
 
+exports("GetFocusUV", function()
+  local f = CR3D.FOCUS or {}
+  return (f.hasHit == true), f.u, f.v, f.panelId, f.hitPos
+end)
+
 exports("SetFocusKeymap", function(keymap)
   return CR3D.SetFocusKeymap(keymap)
 end)
@@ -562,6 +617,7 @@ CreateThread(function()
                 if a.localUp then
                   panel.up = a.rotateNormal and localDirToWorld(a.entity, a.localUp) or CR3D.vecNorm(a.localUp)
                 end
+                invalidatePanelCache(panel)
               end
 
               local step = a.updateInterval or 16
@@ -586,32 +642,84 @@ end)
 -- Render loop (distance culled + adaptive sleeps)
 -------------------------------------------------------------
 CreateThread(function()
+  while true do
+    local cfg = CR3D.CONFIG or {}
+    if cfg.enableCandidateScan ~= true then
+      RENDER_CANDIDATES = {}
+      Wait(500)
+    else
+      local maxDist = tonumber(cfg.renderDistance) or 50.0
+      local maxDistSq = maxDist * maxDist
+      local ppos = CR3D.getPlayerPosCached()
+      local candidates = {}
+
+      for _, panel in pairs(PANELS) do
+        if panel and panel.enabled and panel.dui and CR3D.vecDistSq(ppos, panel.pos) <= maxDistSq then
+          candidates[#candidates + 1] = panel
+        end
+      end
+
+      RENDER_CANDIDATES = candidates
+      Wait(tonumber(cfg.candidateScanInterval) or 250)
+    end
+  end
+end)
+
+CreateThread(function()
   local maxDist = (CR3D.CONFIG and CR3D.CONFIG.renderDistance) or 50.0
   local maxDistSq = maxDist * maxDist
 
   while true do
-    local waitMs = (CR3D.CONFIG and CR3D.CONFIG.idleWait) or 100
+    local cfg = CR3D.CONFIG or {}
+    local waitMs = cfg.idleWait or 100
     local ppos = CR3D.getPlayerPosCached()
     local drewAny = false
 
     -- If user changes CONFIG.renderDistance at runtime, reflect it.
-    local cfgDist = (CR3D.CONFIG and CR3D.CONFIG.renderDistance) or 50.0
+    local cfgDist = cfg.renderDistance or 50.0
     if cfgDist ~= maxDist then
       maxDist = cfgDist
       maxDistSq = maxDist * maxDist
     end
 
-    for _, panel in pairs(PANELS) do
-      if panel and panel.enabled and panel.dui then
-        if CR3D.vecDistSq(ppos, panel.pos) <= maxDistSq then
-          CR3D.drawPanel(panel)
-          drewAny = true
+    local frameCam = CR3D.getFrameCamData()
+    local useCandidates = cfg.enableCandidateScan == true
+    local camForwardCull = cfg.enableCamForwardCull == true
+
+    if useCandidates then
+      for _, panel in ipairs(RENDER_CANDIDATES) do
+        if panel and panel.enabled and panel.dui then
+          if camForwardCull then
+            local toPanel = CR3D.vecSub(panel.pos, frameCam.pos)
+            if CR3D.vecDot(toPanel, frameCam.forward) > 0.0 then
+              CR3D.drawPanel(panel, frameCam)
+              drewAny = true
+            end
+          else
+            CR3D.drawPanel(panel, frameCam)
+            drewAny = true
+          end
+        end
+      end
+    else
+      for _, panel in pairs(PANELS) do
+        if panel and panel.enabled and panel.dui and CR3D.vecDistSq(ppos, panel.pos) <= maxDistSq then
+          if camForwardCull then
+            local toPanel = CR3D.vecSub(panel.pos, frameCam.pos)
+            if CR3D.vecDot(toPanel, frameCam.forward) > 0.0 then
+              CR3D.drawPanel(panel, frameCam)
+              drewAny = true
+            end
+          else
+            CR3D.drawPanel(panel, frameCam)
+            drewAny = true
+          end
         end
       end
     end
 
     if drewAny then
-      waitMs = (CR3D.CONFIG and CR3D.CONFIG.activeWait) or 0
+      waitMs = cfg.activeWait or 0
     end
 
     Wait(waitMs)

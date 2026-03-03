@@ -1,8 +1,91 @@
--- cr-3dnui/client/focus/focus.lua
+﻿-- cr-3dnui/client/focus/focus.lua
 -- Focus + keyboard capture helper (raycast/UV based)
 -- Cursor-mode / direct mouse forwarding will be added later as a separate interaction mode.
 
 CR3D = CR3D or {}
+
+local function _clamp01(x)
+  if x < 0.0 then return 0.0 end
+  if x > 1.0 then return 1.0 end
+  return x
+end
+
+local function _cursorNorm()
+  local rx, ry = GetActiveScreenResolution()
+  if not rx or not ry or rx <= 0 or ry <= 0 then return 0.5, 0.5 end
+  local cx, cy = GetNuiCursorPosition()
+  return _clamp01((tonumber(cx or 0) or 0) / rx), _clamp01((tonumber(cy or 0) or 0) / ry)
+end
+
+local function _raycastPanelNativeCursor(panel, maxDist, frameCam)
+  local sx, sy = _cursorNorm()
+  local ok, worldPos, worldDir = GetWorldCoordFromScreenCoord(sx, sy)
+  if ok ~= true or not worldPos then return nil end
+
+  local camPos = frameCam and frameCam.pos or GetGameplayCamCoord()
+  local camRot = frameCam and frameCam.rot or nil
+  local camForward = frameCam and frameCam.forward or nil
+  local camRight = frameCam and frameCam.right or nil
+
+  local basis = CR3D.makePanelBasis(
+    panel.pos, panel.normal, panel.width, panel.height,
+    panel.zOffset, panel.faceCamera, panel.frontOnly, panel.depthCompensation,
+    panel.up, camPos, camRot, camForward, camRight, panel
+  )
+
+  local center, normal, right, upWall, halfW, halfH =
+    basis.center, basis.normal, basis.right, basis.up, basis.halfW, basis.halfH
+
+  if panel.frontOnly and ((CR3D.CONFIG and CR3D.CONFIG.enableFrontCull) ~= false) then
+    local toCam = CR3D.vecNorm(CR3D.vecSub(camPos, center))
+    local dot = CR3D.vecDot(toCam, normal)
+    local minDot = tonumber(panel.frontDotMin) or 0.0
+    if dot < minDot then return nil end
+  end
+
+  local function _rayHit(origin, dir)
+    if not origin or not dir then return nil end
+    local denom = CR3D.vecDot(dir, normal)
+    if math.abs(denom) < 0.0001 then return nil end
+    local t = CR3D.vecDot(CR3D.vecSub(center, origin), normal) / denom
+    if t < 0.0 then return nil end
+    if maxDist and t > maxDist then return nil end
+    local hitPos = CR3D.vecAdd(origin, CR3D.vecMul(dir, t))
+    local rel = CR3D.vecSub(hitPos, center)
+    local localX = CR3D.vecDot(rel, right) / halfW
+    local localY = CR3D.vecDot(rel, upWall) / halfH
+    if math.abs(localX) > 1.0 or math.abs(localY) > 1.0 then return nil end
+    local u = (localX + 1.0) * 0.5
+    local v = (localY + 1.0) * 0.5
+    return hitPos, u, v, t
+  end
+
+  local dirFromWorldPos = CR3D.vecNorm(CR3D.vecSub(worldPos, camPos))
+  local dirA = dirFromWorldPos
+  local dirB = nil
+  if worldDir and type(worldDir) == "vector3" then
+    -- Some runtimes return a normalized direction vector; others return another world-space point.
+    local len = CR3D.vecLen(worldDir)
+    if len and len > 0.7 and len < 1.3 then
+      dirB = CR3D.vecNorm(worldDir)
+    else
+      dirB = CR3D.vecNorm(CR3D.vecSub(worldDir, camPos))
+    end
+  end
+
+  -- Try camera-origin ray first (stable with maxDist), then fallback to near-plane origin.
+  local hitPos, u, v, t = _rayHit(camPos, dirA)
+  if not hitPos and dirB then
+    hitPos, u, v, t = _rayHit(camPos, dirB)
+  end
+  if not hitPos then
+    hitPos, u, v, t = _rayHit(worldPos, dirA)
+  end
+  if not hitPos and dirB then
+    hitPos, u, v, t = _rayHit(worldPos, dirB)
+  end
+  return hitPos, u, v, t
+end
 
 function CR3D.BeginFocus(panelId, opts)
   if not panelId then return false end
@@ -12,6 +95,10 @@ function CR3D.BeginFocus(panelId, opts)
   CR3D.FOCUS.opts = opts or {}
   CR3D.FOCUS.lastHit = false
   CR3D.FOCUS.missSince = 0
+  CR3D.FOCUS.hasHit = false
+  CR3D.FOCUS.u = nil
+  CR3D.FOCUS.v = nil
+  CR3D.FOCUS.hitPos = nil
   return true
 end
 
@@ -24,6 +111,10 @@ function CR3D.EndFocus()
   CR3D.FOCUS.opts = {}
   CR3D.FOCUS.lastHit = false
   CR3D.FOCUS.missSince = 0
+  CR3D.FOCUS.hasHit = false
+  CR3D.FOCUS.u = nil
+  CR3D.FOCUS.v = nil
+  CR3D.FOCUS.hitPos = nil
   return true
 end
 
@@ -42,18 +133,31 @@ function CR3D.FocusTick()
   local panel = CR3D.PANELS[tostring(CR3D.FOCUS.panelId)]
   if not panel then return false end
 
-  -- Interaction mode gate: current focus tick path supports UV (raycast + UV) only.
+  -- Interaction modes:
+  -- - uv: camera-centered raycast
+  -- - native_mouse: screen-cursor raycast
   local mode = panel.interactionMode or panel.interaction or 'uv'
-  if mode ~= 'uv' then return false end
 
   local opts = CR3D.FOCUS.opts or {}
   local maxDist = opts.maxDist or 7.0
-  local hitPos, u, v, t = CR3D.raycastPanelUV(panel, maxDist)
+  local frameCam = CR3D.getFrameCamData and CR3D.getFrameCamData() or nil
+  local hitPos, u, v, t = nil, nil, nil, nil
+  if mode == 'native_mouse' then
+    hitPos, u, v, t = _raycastPanelNativeCursor(panel, maxDist, frameCam)
+  elseif mode == 'uv' then
+    hitPos, u, v, t = CR3D.raycastPanelUV(panel, maxDist, frameCam)
+  else
+    return false
+  end
 
   local hit = hitPos ~= nil
   local tNow = CR3D.nowMs()
 
   if not hit then
+    CR3D.FOCUS.hasHit = false
+    CR3D.FOCUS.u = nil
+    CR3D.FOCUS.v = nil
+    CR3D.FOCUS.hitPos = nil
     if CR3D.FOCUS.lastHit then
       CR3D.FOCUS.lastHit = false
       if opts.sendFocusMessages then
@@ -73,6 +177,10 @@ function CR3D.FocusTick()
   end
 
   -- hit
+  CR3D.FOCUS.hasHit = true
+  CR3D.FOCUS.u = u
+  CR3D.FOCUS.v = v
+  CR3D.FOCUS.hitPos = hitPos
   if not CR3D.FOCUS.lastHit then
     CR3D.FOCUS.lastHit = true
     CR3D.FOCUS.missSince = 0

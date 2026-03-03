@@ -1,4 +1,4 @@
--- cr-3dnui/client/config.lua
+﻿-- cr-3dnui/client/config.lua
 -- Central configuration (safe defaults; consumers can edit or override via exports later if desired)
 
 CR3D = CR3D or {}
@@ -18,4 +18,17 @@ CR3D.CONFIG = {
 
   -- Sleep for focus loop when focus is disabled (ms)
   focusIdleWait = 100,
+
+  -- Keep legacy orientation behavior unless explicitly disabled.
+  orientationLock = true,
+
+  -- Keep front-only gating active by default.
+  enableFrontCull = true,
+
+  -- Optional two-thread render candidate scan (disabled by default for legacy behavior).
+  enableCandidateScan = false,
+  candidateScanInterval = 250,
+
+  -- Optional cheap "behind camera" cull (disabled by default to avoid behavior changes).
+  enableCamForwardCull = false,
 }

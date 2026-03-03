@@ -1,4 +1,4 @@
--- cr-3dnui/client/replace/replace_texture.lua
+﻿-- cr-3dnui/client/replace/replace_texture.lua
 -- Alternative render mode: draw a DUI onto an existing model material via AddReplaceTexture.
 -- Ideal for props/vehicles that already have a "screen" texture (ATM, laptop, kiosk, etc).
 --
