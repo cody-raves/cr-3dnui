@@ -13,6 +13,30 @@ CR3D.PANELS = CR3D.PANELS or {}
 
 CR3D.NEXT_ID = CR3D.NEXT_ID or 1
 
+-- TXD/Texture Pooling System
+-- Solves the memory leak from constantly creating runtime TXDs that cannot be reliably deleted via natives.
+CR3D.TxdPool = CR3D.TxdPool or {
+  free = {},
+  nextId = 1,
+}
+
+function CR3D.AcquireTxd()
+  if #CR3D.TxdPool.free > 0 then
+    return table.remove(CR3D.TxdPool.free)
+  end
+  local id = CR3D.TxdPool.nextId
+  CR3D.TxdPool.nextId = id + 1
+  local txdName = "cr3dnui_pool_txd_" .. id
+  local texName = "cr3dnui_pool_tex_" .. id
+  local txd = CreateRuntimeTxd(txdName)
+  return { txdName = txdName, texName = texName, txd = txd }
+end
+
+function CR3D.ReleaseTxd(poolObj)
+  if not poolObj then return end
+  table.insert(CR3D.TxdPool.free, poolObj)
+end
+
 -- Entity attachments driver: [tostring(panelId)] = attachmentData
 CR3D.ATTACHMENTS = CR3D.ATTACHMENTS or {}
 CR3D.ATTACH_MAX_WAIT = CR3D.ATTACH_MAX_WAIT or 250

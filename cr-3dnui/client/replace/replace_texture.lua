@@ -34,8 +34,19 @@ local function _createOrUpdateRuntimeTex(entry)
   entry.dui = CreateDui(entry.url, entry.resW or 1024, entry.resH or 1024)
   local handle = GetDuiHandle(entry.dui)
 
-  local txd = CreateRuntimeTxd(entry.rtTxdName)
-  CreateRuntimeTextureFromDuiHandle(txd, entry.rtTexName, handle)
+  if entry.customNames then
+    if not entry.txd then
+      entry.txd = CreateRuntimeTxd(entry.rtTxdName)
+    end
+    CreateRuntimeTextureFromDuiHandle(entry.txd, entry.rtTexName, handle)
+  else
+    if not entry.poolObj then
+      entry.poolObj = CR3D.AcquireTxd()
+      entry.rtTxdName = entry.poolObj.txdName
+      entry.rtTexName = entry.poolObj.texName
+    end
+    CreateRuntimeTextureFromDuiHandle(entry.poolObj.txd, entry.rtTexName, handle)
+  end
 end
 
 -------------------------------------------------------------
@@ -70,6 +81,7 @@ function CR3D.createReplaceTextureInternal(opts, ownerOverride)
 
     rtTxdName = opts.runtimeTxdName or ("cr3dnui_rttxd_%s"):format(id),
     rtTexName = opts.runtimeTexName or ("cr3dnui_rttex_%s"):format(id),
+    customNames = (opts.runtimeTxdName ~= nil or opts.runtimeTexName ~= nil),
 
     dui = nil,
   }
@@ -108,6 +120,12 @@ function CR3D.destroyReplaceTextureInternal(replaceId)
   RemoveReplaceTexture(entry.origTxd, entry.origTxn)
 
   _destroyDui(entry)
+
+  if entry.poolObj then
+    CR3D.ReleaseTxd(entry.poolObj)
+    entry.poolObj = nil
+  end
+
   REPLACES[key] = nil
   return true
 end

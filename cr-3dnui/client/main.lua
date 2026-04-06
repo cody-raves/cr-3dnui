@@ -77,11 +77,13 @@ local function createDuiForPanel(panel)
   panel.dui = CreateDui(panel.url, panel.resW or 1024, panel.resH or 1024)
   local handle = GetDuiHandle(panel.dui)
 
-  panel.txdName = ("cr3dnui_txd_%s"):format(panel.id)
-  panel.texName = ("cr3dnui_tex_%s"):format(panel.id)
+  if not panel.poolObj then
+    panel.poolObj = CR3D.AcquireTxd()
+    panel.txdName = panel.poolObj.txdName
+    panel.texName = panel.poolObj.texName
+  end
 
-  local txd = CreateRuntimeTxd(panel.txdName)
-  CreateRuntimeTextureFromDuiHandle(txd, panel.texName, handle)
+  CreateRuntimeTextureFromDuiHandle(panel.poolObj.txd, panel.texName, handle)
 end
 
 local function destroyDuiForPanel(panel)
@@ -90,8 +92,8 @@ local function destroyDuiForPanel(panel)
     DestroyDui(panel.dui)
     panel.dui = nil
   end
-  panel.txdName = nil
-  panel.texName = nil
+  -- We deliberately DO NOT release panel.poolObj here, 
+  -- so that updates like SetPanelUrl can reuse it without thrashing the pool.
 end
 
 -------------------------------------------------------------
@@ -159,6 +161,14 @@ local function destroyPanelInternal(panelId)
 
   ATTACHMENTS[key] = nil
   destroyDuiForPanel(panel)
+
+  if panel.poolObj then
+    CR3D.ReleaseTxd(panel.poolObj)
+    panel.poolObj = nil
+    panel.txdName = nil
+    panel.texName = nil
+  end
+
   PANELS[key] = nil
 end
 
@@ -247,6 +257,18 @@ exports("SetPanelZOffset", function(panelId, zOffset)
   panel.zOffset = zOffset -- can be nil to use defaults from depthCompensation
   invalidatePanelCache(panel)
   return true
+end)
+
+-- TXD Pool stats (for debugging / monitoring)
+exports("GetTxdPoolStats", function()
+  local total = CR3D.TxdPool.nextId - 1
+  local free = #CR3D.TxdPool.free
+  local active = total - free
+  return {
+    total = total,
+    active = active,
+    free = free
+  }
 end)
 
 -------------------------------------------------------------
