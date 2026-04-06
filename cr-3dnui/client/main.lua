@@ -271,6 +271,13 @@ exports("GetTxdPoolStats", function()
   }
 end)
 
+RegisterCommand("cr3d_txds", function()
+  local total = CR3D.TxdPool.nextId - 1
+  local free = #CR3D.TxdPool.free
+  local active = total - free
+  print(string.format("[cr-3dnui] TXD Pool Stats: %d Total | %d Active | %d Free", total, active, free))
+end, false)
+
 -------------------------------------------------------------
 -- Attachment helper (transform driver)
 -------------------------------------------------------------
