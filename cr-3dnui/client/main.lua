@@ -777,6 +777,30 @@ end)
 
 
 -------------------------------------------------------------
+-- EXPORTS (client): Decal (DUI -> persistent projected world decal)
+-------------------------------------------------------------
+
+exports('ConfigureDecalTypes', function(types)
+  return CR3D.configureDecalTypesInternal(types)
+end)
+
+exports('CreateDecal', function(opts)
+  return CR3D.createDecalInternal(opts or {}, GetInvokingResource() or 'unknown')
+end)
+
+exports('DestroyDecal', function(decalId)
+  return CR3D.destroyDecalInternal(decalId)
+end)
+
+exports('SetDecalUrl', function(decalId, url, resW, resH)
+  return CR3D.setDecalUrlInternal(decalId, url, resW, resH)
+end)
+
+exports('GetDecalInfo', function(decalId)
+  return CR3D.getDecalInfoInternal(decalId)
+end)
+
+-------------------------------------------------------------
 -- EXPORTS (client): ReplaceTexture (DUI -> material texture)
 -------------------------------------------------------------
 

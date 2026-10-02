@@ -99,6 +99,68 @@ If you do not see the panel, ensure the demo resource is started and that its NU
 
 ---
 
+## Decal mode (persistent projected surfaces)
+
+Panels are drawn every frame. Decal mode instead projects the DUI onto world
+geometry as a **native engine decal** (`PatchDecalDiffuseMap` + `AddDecal`):
+zero per-frame script cost, long-range visibility, and the surface stays put
+like real world detail. The DUI page can still animate — the decal samples the
+live texture.
+
+Good for: billboards, posters, murals, menu boards, anything "printed on the
+world" rather than an interactive screen. (Decals are output-only: raycast/UV
+input still requires a panel.)
+
+```lua
+-- once, at startup: give the library the native decal types it may lease.
+-- These are GLOBAL engine slots - two resources patching the same type will
+-- overwrite each other, so coordinate across your server's resources.
+exports['cr-3dnui']:ConfigureDecalTypes({
+  9100, 9101, 9102, 9103, 9104, 9106, 9107, 9108, 9110, 9111,
+  9112, 9115, 9116, 9117, 9118, 9119, 9123,
+})
+
+local decalId = exports['cr-3dnui']:CreateDecal({
+  url    = 'nui://my_resource/html/poster.html',
+  pos    = vector3(-595.2, 210.4, 42.1),   -- centre of the surface
+  normal = vector3(0.0, -1.0, 0.0),        -- faces the viewer
+  up     = vector3(0.0, 0.0, 1.0),         -- optional; world-up default
+  width  = 4.0,                            -- metres
+  height = 3.0,
+  resW   = 1024,
+  resH   = 768,
+})
+
+-- swap content later (same decal, new page):
+exports['cr-3dnui']:SetDecalUrl(decalId, 'nui://my_resource/html/poster2.html')
+
+-- inspect while debugging:
+print(json.encode(exports['cr-3dnui']:GetDecalInfo(decalId)))
+
+exports['cr-3dnui']:DestroyDecal(decalId)
+```
+
+Hard-won notes baked into this mode (so you do not have to rediscover them):
+
+- The projector origin starts `0.0666 m` off the surface (`opts.surfaceOffset`
+  to override); starting inside the collision skin makes `AddDecal` reject it.
+- The side vector is always re-orthonormalized - a side vector with any
+  component along the projection direction makes the artwork appear to rotate
+  with the camera.
+- Avoid stock types `9120/9121/9122`: their `decals.dat` definitions set
+  `ROTATE_CAMERA` and the artwork spins.
+- `IsDecalAlive` returns `1/0` instead of `true/false` on some game builds;
+  the library normalizes both.
+- Removal of a just-added decal can silently fail on the same frame; the
+  library retries a frame later.
+- One decal surface leases one configured type for its lifetime. Need many
+  surfaces showing the SAME content? Point several `CreateDecal` calls at the
+  same `url` - each still needs its own type today, so for true N-boards-one-
+  texture pooling (one type, many `AddDecal` instances) open an issue; the
+  internals support it.
+
+---
+
 ## Library exports
 
 All exports are client-side.
